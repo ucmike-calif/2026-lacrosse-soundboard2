@@ -655,16 +655,12 @@
     const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal", PLAYLIST: "playlist" });
     let currentMode = Mode.SONGS;
 
-    let currentButtonEl = null;
-    let lastPlayed = null;   
+    // Track all actively playing tracks
+    const activeTracks = new Map(); // cardEl -> { audio, gainNode, mediaNode, fadeTimer }
     let pendingGoal = null;  
 
     const blobUrlCache = new Map();
-    let currentAudioEl = null;
     let audioCtx = null;
-    let currentMediaNode = null;
-    let currentGainNode = null;
-    let fadeTimer = null;
     let audioUnlocked = false;
 
     const grid = document.getElementById("grid");
@@ -771,34 +767,27 @@
       setTimeout(() => el.classList.remove("flash"), 140);
     }
 
-    function clearPlayingHighlight(){
-      if(currentButtonEl){
-        currentButtonEl.classList.remove("playing");
-        currentButtonEl.style.removeProperty('--progress');
-        currentButtonEl = null;
+    function stopTrackImmediate(cardEl) {
+      const track = activeTracks.get(cardEl);
+      if (!track) return;
+      if (track.fadeTimer) clearInterval(track.fadeTimer);
+      if (track.audio) {
+        try { track.audio.pause(); } catch(e){}
+        try { track.audio.currentTime = 0; } catch(e){}
       }
+      if (track.mediaNode) { try { track.mediaNode.disconnect(); } catch(e){} }
+      if (track.gainNode) { try { track.gainNode.disconnect(); } catch(e){} }
+      
+      cardEl.classList.remove("playing");
+      cardEl.style.removeProperty('--progress');
+      activeTracks.delete(cardEl);
+      
+      if (activeTracks.size === 0) setStatus("");
     }
 
-    function stopImmediate(){
-      if (fadeTimer){
-        clearInterval(fadeTimer);
-        fadeTimer = null;
-      }
-      if (currentAudioEl){
-        try { currentAudioEl.pause(); } catch(e){}
-        try { currentAudioEl.currentTime = 0; } catch(e){}
-      }
-      if (currentMediaNode){
-        try { currentMediaNode.disconnect(); } catch(e){}
-        currentMediaNode = null;
-      }
-      if (currentGainNode){
-        try { currentGainNode.disconnect(); } catch(e){}
-        currentGainNode = null;
-      }
-      currentAudioEl = null;
-      clearPlayingHighlight();
-      setStatus("");
+    function stopAllImmediate(){
+      const cards = Array.from(activeTracks.keys());
+      cards.forEach(c => stopTrackImmediate(c));
     }
 
     function ensureAudioContext(){
@@ -824,31 +813,29 @@
       audioUnlocked = true;
     }
 
-    function stopWithFade(){
-      if (!currentAudioEl){
-        stopImmediate();
+    function stopTrackWithFade(cardEl) {
+      const track = activeTracks.get(cardEl);
+      if (!track || !track.audio) {
+        stopTrackImmediate(cardEl);
         return;
       }
-      clearPlayingHighlight();
+      
+      cardEl.classList.remove("playing"); // remove UI early
+      if (track.fadeTimer) clearInterval(track.fadeTimer);
 
-      if (fadeTimer){
-        clearInterval(fadeTimer);
-        fadeTimer = null;
-      }
-
-      const audio = currentAudioEl;
+      const audio = track.audio;
       const totalMs = Math.max(300, Math.round(FADE_TOTAL_SEC * 1000));
       const holdMs  = Math.max(0, Math.min(totalMs - 50, Math.round(FADE_HOLD_SEC * 1000)));
       const startTs = performance.now();
 
-      const hasGain = !!(currentGainNode && audioCtx);
-      const startGain = hasGain ? (currentGainNode.gain.value || 1) : (audio.volume ?? 1);
+      const hasGain = !!(track.gainNode && audioCtx);
+      const startGain = hasGain ? (track.gainNode.gain.value || 1) : (audio.volume ?? 1);
 
-      fadeTimer = setInterval(() => {
+      track.fadeTimer = setInterval(() => {
         const t = performance.now() - startTs;
 
         if (t <= holdMs){
-          if (hasGain) currentGainNode.gain.value = startGain;
+          if (hasGain) track.gainNode.gain.value = startGain;
           else audio.volume = startGain;
           return;
         }
@@ -858,19 +845,24 @@
         const cosine = 0.5 - 0.5 * Math.cos(Math.PI * smooth);
         const v = Math.max(0.0001, startGain * (1 - cosine));
 
-        if (hasGain) currentGainNode.gain.value = v;
+        if (hasGain) track.gainNode.gain.value = v;
         else audio.volume = v;
 
         if (p >= 1){
-          clearInterval(fadeTimer);
-          fadeTimer = null;
-          stopImmediate();
+          clearInterval(track.fadeTimer);
+          stopTrackImmediate(cardEl);
         }
       }, 33);
     }
 
+    function stopAllWithFade() {
+      const cards = Array.from(activeTracks.keys());
+      cards.forEach(c => stopTrackWithFade(c));
+    }
+
     async function playAudio(src, label, buttonEl){
-      stopImmediate();
+      // Note: We no longer call stopImmediate() here, allowing simultaneous audio tracks!
+      
       await unlockAudio();
       const ctx = ensureAudioContext();
       if (ctx.state === "suspended"){
@@ -903,10 +895,9 @@
       audio.volume = 1.0;
       audio.muted = false;
       audio.playsInline = true;
-      currentAudioEl = audio;
 
       const updateProgress = () => {
-        if (audio === currentAudioEl && buttonEl) {
+        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
           const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
           buttonEl.style.setProperty('--progress', `${pct}%`);
         }
@@ -917,40 +908,51 @@
         const code = audio?.error?.code;
         const fullUrl = new URL(src, window.location.href).href; 
         setStatus(`Audio error (code ${code || "?"}): ${fullUrl}`);
-        clearPlayingHighlight();
+        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
+          stopTrackImmediate(buttonEl);
+        }
       });
 
+      let gainNode = null;
+      let mediaNode = null;
       try {
-        currentGainNode = ctx.createGain();
-        currentGainNode.gain.setValueAtTime(1.0, ctx.currentTime);
-        currentGainNode.connect(ctx.destination);
-        currentMediaNode = ctx.createMediaElementSource(audio);
-        currentMediaNode.connect(currentGainNode);
+        gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+        gainNode.connect(ctx.destination);
+        mediaNode = ctx.createMediaElementSource(audio);
+        mediaNode.connect(gainNode);
       } catch(e){
-        currentMediaNode = null;
-        currentGainNode = null;
+        mediaNode = null;
+        gainNode = null;
       }
 
+      // If this specific button was already playing, stop its previous sound first
+      if (activeTracks.has(buttonEl)) {
+        stopTrackImmediate(buttonEl);
+      }
+
+      activeTracks.set(buttonEl, { audio, gainNode, mediaNode, fadeTimer: null });
+
       if (buttonEl){
-        currentButtonEl = buttonEl;
         buttonEl.classList.add("playing");
       }
 
-      setStatus(`Loading: ${label}`);
+      setStatus(`Playing: ${label}`);
 
       audio.addEventListener("ended", () => {
-        if (currentAudioEl === audio){
-          stopImmediate();
+        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
+          stopTrackImmediate(buttonEl);
         }
       });
 
       try {
         await audio.play();
-        lastPlayed = { src, label };
-        setStatus(`Playing: ${label}`);
       } catch (err){
         console.error("PLAY ERROR:", err);
         setStatus(`Playback blocked: tap again (${err?.name || "error"})`);
+        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
+          stopTrackImmediate(buttonEl);
+        }
       }
     }
 
@@ -1169,6 +1171,11 @@
       `;
       card.appendChild(playOverlay);
 
+      // Restore active UI state if this card was re-rendered while playing
+      if (activeTracks.has(card)) {
+          card.classList.add("playing");
+      }
+
       // --- iOS Touch Friendly Long-Press Menu Logic ---
       let longPressTimer;
       let longPressed = false;
@@ -1275,9 +1282,9 @@
 
         flashButton(card);
         
-        // Toggle Stop logic
-        if (card === currentButtonEl && currentAudioEl && !currentAudioEl.paused) {
-          stopWithFade();
+        // Toggle Stop logic for this individual track
+        if (activeTracks.has(card)) {
+          stopTrackWithFade(card);
           return;
         }
         
@@ -1378,7 +1385,7 @@
       stopBtn.disabled = true;
       setStatus("Stopping…");
 
-      stopWithFade();
+      stopAllWithFade();
       hideConfirmBar();
 
       const ms = Math.ceil(Math.max(0.5, FADE_TOTAL_SEC) * 1000) + 250;
