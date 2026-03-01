@@ -374,55 +374,6 @@
       min-height: 18px;
     }
 
-    .confirmbar{
-      /* Top, under the buttons */
-      position: sticky;
-      top: 0;
-      padding: 10px 12px;
-      background: rgba(255,255,255,0.97);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      box-shadow: 0 10px 24px rgba(0,0,0,0.08);
-      display: none;
-      z-index: 999;
-      backdrop-filter: blur(8px);
-    }
-
-    .confirmbar-inner{
-      max-width: 1100px;
-      margin: 0 auto;
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    .confirmtext{
-      flex: 1 1 260px;
-      font-size: 16px;
-      font-weight: 700;
-      color: #111;
-    }
-
-    .confirmbtn{
-      border: 1px solid var(--btnBorder);
-      border-radius: 10px;
-      padding: 10px 14px;
-      cursor: pointer;
-      font-size: 16px;
-      box-shadow: 0 2px 8px var(--btnShadow);
-      background: #fff;
-      user-select: none;
-    }
-
-    .confirmbtn.cancel{ color: #333; }
-    .confirmbtn.go{
-      background: var(--red);
-      color: #fff;
-      border-color: rgba(0,0,0,0.08);
-      font-weight: 800;
-    }
-
     /* Modal Overlay Base */
     .modal-overlay {
       display: none;
@@ -490,15 +441,6 @@
     <button id="playlistTab" class="tabbtn" type="button"><span class="playlistText">Playlist</span></button>
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
     <button id="cacheBtn" class="ctlbtn" type="button" title="Download all audio to device for offline use">Offline Sync</button>
-  </div>
-
-  <!-- Goal confirm banner (shows only in Goal mode) -->
-  <div id="confirmBar" class="confirmbar">
-    <div class="confirmbar-inner">
-      <div id="confirmText" class="confirmtext">Confirm GOAL call:</div>
-      <button id="confirmCancel" class="confirmbtn cancel" type="button">Cancel</button>
-      <button id="confirmGo" class="confirmbtn go" type="button">PLAY GOAL</button>
-    </div>
   </div>
 
   <div id="status" class="status"></div>
@@ -657,7 +599,6 @@
 
     // Track all actively playing tracks
     const activeTracks = new Map(); // cardEl -> { audio, gainNode, mediaNode, fadeTimer }
-    let pendingGoal = null;  
 
     const blobUrlCache = new Map();
     let audioCtx = null;
@@ -672,11 +613,6 @@
     const playlistTab = document.getElementById("playlistTab");
     const stopBtn     = document.getElementById("stopBtn");
     const cacheBtn    = document.getElementById("cacheBtn");
-
-    const confirmBar = document.getElementById("confirmBar");
-    const confirmText = document.getElementById("confirmText");
-    const confirmCancel = document.getElementById("confirmCancel");
-    const confirmGo = document.getElementById("confirmGo");
 
     /*****************************************************************
      * Custom Action Menu & Color Picker Logic
@@ -1019,16 +955,6 @@
       cacheBtn.disabled = false;
     }
 
-    function showConfirmBar(text){
-      confirmText.textContent = text;
-      confirmBar.style.display = "block";
-    }
-
-    function hideConfirmBar(){
-      confirmBar.style.display = "none";
-      pendingGoal = null;
-    }
-
     function setMode(mode){
       currentMode = mode;
       
@@ -1042,7 +968,6 @@
         songsTab.classList.add("active");
         goalTab.classList.remove("active");
         playlistTab.classList.remove("active");
-        hideConfirmBar();
       } else if(mode === Mode.GOAL){
         modeBanner.textContent = "GOAL MODE";
         modeBanner.className = "banner goal";
@@ -1055,7 +980,6 @@
         playlistTab.classList.add("active");
         songsTab.classList.remove("active");
         goalTab.classList.remove("active");
-        hideConfirmBar();
       }
 
       renderGrid();
@@ -1362,8 +1286,8 @@
             if(currentMode === Mode.SONGS){
               playAudio(songSrc, label, el);
             } else {
-              pendingGoal = { src: goalSrc, label: `Confirm GOAL call: ${label}`, buttonEl: el };
-              showConfirmBar(pendingGoal.label);
+              // DIRECT GOAL PLAYBACK - No confirmation step
+              playAudio(goalSrc, `GOAL: ${label}`, el);
             }
           }
         });
@@ -1386,7 +1310,6 @@
       setStatus("Stopping…");
 
       stopAllWithFade();
-      hideConfirmBar();
 
       const ms = Math.ceil(Math.max(0.5, FADE_TOTAL_SEC) * 1000) + 250;
       setTimeout(() => {
@@ -1394,18 +1317,6 @@
         stopBtn.textContent = originalText;
         stopBtn.disabled = false;
       }, ms);
-    });
-
-    confirmCancel.addEventListener("click", () => {
-      hideConfirmBar();
-      setStatus("");
-    });
-
-    confirmGo.addEventListener("click", () => {
-      if(!pendingGoal) return;
-      const { src, label, buttonEl } = pendingGoal;
-      hideConfirmBar();
-      playAudio(src, label.replace("Confirm ", ""), buttonEl);
     });
 
     // Initial render
