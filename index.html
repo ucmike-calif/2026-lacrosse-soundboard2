@@ -196,6 +196,28 @@
       opacity: 0.8;
     }
 
+    /* Move Mode Styles */
+    .card.moving-source {
+      transform: scale(1.05);
+      border-color: var(--active-theme) !important;
+      box-shadow: 0 0 0 4px var(--active-theme), 0 10px 24px rgba(0,0,0,0.18) !important;
+      z-index: 5;
+      animation: pulse-border 1.5s infinite;
+    }
+    @keyframes pulse-border {
+      0% { opacity: 1; }
+      50% { opacity: 0.6; }
+      100% { opacity: 1; }
+    }
+    .card.moving-target {
+      outline: 3px dashed var(--active-theme);
+      outline-offset: 4px;
+    }
+    .card.moving-target:active {
+      background: var(--active-theme);
+      opacity: 0.3;
+    }
+
     /* Playlist-specific grid: 6 columns, tight gaps */
     .grid.playlist-grid{
       gap: 6px;
@@ -401,8 +423,8 @@
       font-weight: 800;
     }
 
-    /* Custom Color Picker Modal Styles */
-    .color-picker-overlay {
+    /* Modal Overlay Base */
+    .modal-overlay {
       display: none;
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
@@ -413,7 +435,7 @@
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
     }
-    .color-picker-modal {
+    .modal-content {
       background: #fff;
       border-radius: 16px;
       padding: 24px;
@@ -422,6 +444,8 @@
       text-align: center;
       box-shadow: 0 10px 30px rgba(0,0,0,0.2);
     }
+
+    /* Custom Color Picker Menu */
     .color-swatch-grid {
       display: flex;
       flex-wrap: wrap;
@@ -483,19 +507,31 @@
     <div id="grid" class="grid"></div>
   </div>
 
+  <!-- Action Menu Modal -->
+  <div id="actionMenuOverlay" class="modal-overlay">
+    <div class="modal-content">
+      <h3 style="margin-top:0; font-size:20px;">Button Options</h3>
+      <p style="font-size:14px; color:#666; margin-top:-10px;">What would you like to do?</p>
+      <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">
+        <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('move')">Move Button</button>
+        <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('color')">Change Color</button>
+        <button class="ctlbtn" style="background: #fff; color: #555; font-weight:bold; margin-top: 8px;" onclick="closeActionMenu()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Color Picker Modal -->
-  <div id="colorPickerOverlay" class="color-picker-overlay">
-    <div class="color-picker-modal">
+  <div id="colorPickerOverlay" class="modal-overlay">
+    <div class="modal-content">
       <h3 style="margin-top:0; font-size:20px;">Button Color</h3>
       <p style="font-size:14px; color:#666; margin-top:-10px;">Pick a color for this button.</p>
       <div id="swatchContainer" class="color-swatch-grid"></div>
-      <button class="ctlbtn" style="width:100%; padding:12px; font-weight:bold;" onclick="closeColorPicker()">Close</button>
+      <button class="ctlbtn" style="width:100%; padding:12px; font-weight:bold;" onclick="closeColorPicker()">Cancel</button>
     </div>
   </div>
 
   <script>
     // Try to register an external service worker for caching the HTML page itself.
-    // (If you want the page itself to open without WiFi, place an empty or standard PWA sw.js next to this file).
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js').catch(e => {
@@ -509,10 +545,8 @@
      *****************************************************************/
     const AUDIO_BASE = "audio"; // repo path: /audio/...
 
-    // Fade tuning
-    // Goal: no "cliff" — smooth, predictable tail.
-    const FADE_TOTAL_SEC = 4.0; // total fade length
-    const FADE_HOLD_SEC  = 1.0; // stays full volume for first part of fade
+    const FADE_TOTAL_SEC = 4.0; 
+    const FADE_HOLD_SEC  = 1.0; 
 
     // Players missing SONG files (easy to undo: remove numbers from this set)
     const MISSING_SONG_NUMS = new Set([2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30]);
@@ -598,7 +632,6 @@
         songsLayout.sort((a, b) => {
           let posA = savedSongsOrder.indexOf(a._dragId);
           let posB = savedSongsOrder.indexOf(b._dragId);
-          // If a new player/item was added that isn't in saved layout, put it at the end
           if(posA === -1) posA = 9999;
           if(posB === -1) posB = 9999;
           return posA - posB;
@@ -623,13 +656,10 @@
     let currentMode = Mode.SONGS;
 
     let currentButtonEl = null;
-    let lastPlayed = null;   // { src, label }
-    let pendingGoal = null;  // { src, label, buttonEl }
+    let lastPlayed = null;   
+    let pendingGoal = null;  
 
-    // Store Blob URLs generated from the offline cache so we don't cause memory leaks
     const blobUrlCache = new Map();
-
-    // Hybrid playback: HTMLAudioElement routed through Web Audio GainNode for Safari-safe output + smooth fades
     let currentAudioEl = null;
     let audioCtx = null;
     let currentMediaNode = null;
@@ -653,7 +683,7 @@
     const confirmGo = document.getElementById("confirmGo");
 
     /*****************************************************************
-     * Custom Colors State & UI
+     * Custom Action Menu & Color Picker Logic
      *****************************************************************/
     const colorPalette = [
       { name: 'Red', bg: '#ffebee', border: '#ef9a9a' },
@@ -667,20 +697,21 @@
     ];
 
     let cardColors = JSON.parse(localStorage.getItem('lax-card-colors') || '{}');
-    let targetDragIdForColor = null;
-    let isColorPickerRecent = false; // Prevent accidental clicks just after closing
+    
+    // UI State flags to handle the new Menu & Move flows
+    let activeActionId = null;
+    let isMenuRecent = false; 
+    let isMoveMode = false;
+    let moveSourceId = null;
 
     function initColorPicker() {
       const container = document.getElementById('swatchContainer');
-      
-      // Default (Reset) Swatch
       const defSwatch = document.createElement('div');
       defSwatch.className = 'color-swatch default-swatch';
       defSwatch.innerHTML = '&times;';
       defSwatch.onclick = () => selectColor(null, null);
       container.appendChild(defSwatch);
 
-      // Color Swatches
       colorPalette.forEach(c => {
         const el = document.createElement('div');
         el.className = 'color-swatch';
@@ -691,26 +722,40 @@
       });
     }
 
-    function openColorPicker(dragId) {
-      targetDragIdForColor = dragId;
-      document.getElementById('colorPickerOverlay').style.display = 'flex';
-      
-      // Temporarily block card clicks so releasing the long press doesn't instantly play audio
-      isColorPickerRecent = true; 
-      setTimeout(() => isColorPickerRecent = false, 500);
+    function openActionMenu(dragId) {
+      activeActionId = dragId;
+      document.getElementById('actionMenuOverlay').style.display = 'flex';
+      isMenuRecent = true; 
+      setTimeout(() => isMenuRecent = false, 500);
+    }
+
+    function closeActionMenu() {
+      document.getElementById('actionMenuOverlay').style.display = 'none';
+    }
+
+    function handleActionSelection(action) {
+      closeActionMenu();
+      if (action === 'color') {
+        document.getElementById('colorPickerOverlay').style.display = 'flex';
+      } else if (action === 'move') {
+        isMoveMode = true;
+        moveSourceId = activeActionId;
+        setStatus("MOVE MODE: Tap destination to swap.");
+        renderGrid(); // Redraws to show the moving-source border effects
+      }
     }
 
     function closeColorPicker() {
       document.getElementById('colorPickerOverlay').style.display = 'none';
-      targetDragIdForColor = null;
+      activeActionId = null;
     }
 
     function selectColor(bg, border) {
-      if (!targetDragIdForColor) return;
+      if (!activeActionId) return;
       if (bg === null) {
-        delete cardColors[targetDragIdForColor];
+        delete cardColors[activeActionId];
       } else {
-        cardColors[targetDragIdForColor] = { bg, border };
+        cardColors[activeActionId] = { bg, border };
       }
       localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
       renderGrid(); 
@@ -729,7 +774,7 @@
     function clearPlayingHighlight(){
       if(currentButtonEl){
         currentButtonEl.classList.remove("playing");
-        currentButtonEl.style.removeProperty('--progress'); // Reset the progress ring
+        currentButtonEl.style.removeProperty('--progress');
         currentButtonEl = null;
       }
     }
@@ -739,14 +784,10 @@
         clearInterval(fadeTimer);
         fadeTimer = null;
       }
-
-      // Stop audio element
       if (currentAudioEl){
         try { currentAudioEl.pause(); } catch(e){}
         try { currentAudioEl.currentTime = 0; } catch(e){}
       }
-
-      // Disconnect Web Audio nodes
       if (currentMediaNode){
         try { currentMediaNode.disconnect(); } catch(e){}
         currentMediaNode = null;
@@ -755,7 +796,6 @@
         try { currentGainNode.disconnect(); } catch(e){}
         currentGainNode = null;
       }
-
       currentAudioEl = null;
       clearPlayingHighlight();
       setStatus("");
@@ -789,8 +829,6 @@
         stopImmediate();
         return;
       }
-
-      // Remove the active UI immediately so it feels responsive to the user
       clearPlayingHighlight();
 
       if (fadeTimer){
@@ -803,7 +841,6 @@
       const holdMs  = Math.max(0, Math.min(totalMs - 50, Math.round(FADE_HOLD_SEC * 1000)));
       const startTs = performance.now();
 
-      // Prefer GainNode fade when available
       const hasGain = !!(currentGainNode && audioCtx);
       const startGain = hasGain ? (currentGainNode.gain.value || 1) : (audio.volume ?? 1);
 
@@ -817,7 +854,6 @@
         }
 
         const p = Math.min(1, (t - holdMs) / Math.max(1, (totalMs - holdMs)));
-        // Super-smooth curve: smoothstep -> cosine
         const smooth = p * p * (3 - 2 * p);
         const cosine = 0.5 - 0.5 * Math.cos(Math.PI * smooth);
         const v = Math.max(0.0001, startGain * (1 - cosine));
@@ -835,23 +871,18 @@
 
     async function playAudio(src, label, buttonEl){
       stopImmediate();
-
-      // Ensure Safari output is unlocked on a user gesture
       await unlockAudio();
       const ctx = ensureAudioContext();
       if (ctx.state === "suspended"){
         try { await ctx.resume(); } catch(e){}
       }
 
-      // Check for offline cached version first!
       let finalSrc = src;
       try {
         if ('caches' in window) {
           const cache = await caches.open('lax-audio-v1');
           const cachedRes = await cache.match(src);
-          
           if (cachedRes) {
-            // Already cached, convert to local Blob URL so it bypasses network completely
             if (blobUrlCache.has(src)) {
               finalSrc = blobUrlCache.get(src);
             } else {
@@ -860,10 +891,9 @@
               blobUrlCache.set(src, finalSrc);
             }
           } else {
-            // Not in cache, fetch it passively in background so it's ready next time
             fetch(src).then(res => {
               if (res.ok) cache.put(src, res.clone());
-            }).catch(() => console.log("Background cache failed (offline)"));
+            }).catch(() => console.log("Background cache failed"));
           }
         }
       } catch(e) { console.warn("Cache API Error:", e); }
@@ -875,7 +905,6 @@
       audio.playsInline = true;
       currentAudioEl = audio;
 
-      // Track playback progress and inject to CSS Variable
       const updateProgress = () => {
         if (audio === currentAudioEl && buttonEl) {
           const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -884,24 +913,20 @@
       };
       audio.addEventListener('timeupdate', updateProgress);
 
-      // Helpful error reporting (Safari will throw decode/MIME issues here)
       audio.addEventListener("error", () => {
         const code = audio?.error?.code;
-        const fullUrl = new URL(src, window.location.href).href; // Display original source for clarity
+        const fullUrl = new URL(src, window.location.href).href; 
         setStatus(`Audio error (code ${code || "?"}): ${fullUrl}`);
         clearPlayingHighlight();
       });
 
-      // Route through Web Audio GainNode so fades are consistent
       try {
         currentGainNode = ctx.createGain();
         currentGainNode.gain.setValueAtTime(1.0, ctx.currentTime);
         currentGainNode.connect(ctx.destination);
-
         currentMediaNode = ctx.createMediaElementSource(audio);
         currentMediaNode.connect(currentGainNode);
       } catch(e){
-        // If MediaElementSource fails, fall back to plain audio element
         currentMediaNode = null;
         currentGainNode = null;
       }
@@ -929,7 +954,6 @@
       }
     }
 
-    // New Offline Sync function to download all tracks
     async function syncOffline() {
       if (!('caches' in window)) {
         setStatus("Offline caching not supported in this browser.");
@@ -1005,6 +1029,10 @@
 
     function setMode(mode){
       currentMode = mode;
+      
+      // If switching modes, ensure Move Mode is canceled
+      isMoveMode = false;
+      moveSourceId = null;
 
       if(mode === Mode.SONGS){
         modeBanner.textContent = "SONG MODE";
@@ -1032,7 +1060,7 @@
       setStatus("");
     }
 
-    /* DRAG AND DROP HANDLERS */
+    /* DESKTOP DRAG AND DROP HANDLERS (Still enabled for Mouse users) */
     let dragSrcEl = null;
 
     function handleDragStart(e) {
@@ -1044,7 +1072,7 @@
 
     function handleDragOver(e) {
       if (e.preventDefault) {
-        e.preventDefault(); // Allows drop
+        e.preventDefault(); 
       }
       e.dataTransfer.dropEffect = 'move';
       return false;
@@ -1065,7 +1093,6 @@
         e.stopPropagation();
       }
       if (dragSrcEl !== this) {
-        // 1. Reorder DOM visually
         const gridNodes = Array.from(grid.children);
         const srcIndex = gridNodes.indexOf(dragSrcEl);
         const destIndex = gridNodes.indexOf(this);
@@ -1076,7 +1103,6 @@
           this.parentNode.insertBefore(dragSrcEl, this);
         }
 
-        // 2. Save order state so it persists across tab switches AND page reloads
         const activeLayout = currentMode === Mode.PLAYLIST ? playlistLayout : songsLayout;
         const storageKey = currentMode === Mode.PLAYLIST ? 'lax-playlist-layout' : 'lax-songs-layout';
         const newOrder = Array.from(grid.children).map(c => c.dataset.dragId);
@@ -1097,9 +1123,18 @@
       const card = document.createElement("div");
       card.className = "card";
       card.dataset.dragId = dragId;
-      card.setAttribute('draggable', 'true'); // Enables drag and drop
+      
+      // If we are currently using Tap-to-Move, disable traditional desktop dragging so they don't clash
+      if (!isMoveMode) {
+        card.setAttribute('draggable', 'true'); 
+      }
 
-      // Apply assigned colors if they exist
+      // Assign Tap-to-Move CSS classes if active
+      if (isMoveMode) {
+        if (dragId === moveSourceId) card.classList.add("moving-source");
+        else card.classList.add("moving-target");
+      }
+
       if (cardColors[dragId]) {
         card.style.setProperty('--custom-bg', cardColors[dragId].bg);
         card.style.setProperty('--custom-border', cardColors[dragId].border);
@@ -1122,7 +1157,6 @@
       card.appendChild(num);
       card.appendChild(name);
 
-      // Add the active playing overlay with progress ring & pause icon
       const playOverlay = document.createElement("div");
       playOverlay.className = "play-overlay";
       playOverlay.innerHTML = `
@@ -1135,15 +1169,15 @@
       `;
       card.appendChild(playOverlay);
 
-      // --- Custom Long-Press Color Picker Logic (iOS Touch Friendly) ---
+      // --- iOS Touch Friendly Long-Press Menu Logic ---
       let longPressTimer;
       let longPressed = false;
-      let isDraggingOrMoved = false; 
+      let isFingerMoving = false; 
       let startX = 0, startY = 0;
 
       function startPress(e) {
-        if (e.type === 'mousedown' && e.button !== 0) return; // Only process main touch/click
-        isDraggingOrMoved = false;
+        if (e.type === 'mousedown' && e.button !== 0) return; 
+        isFingerMoving = false;
         longPressed = false;
         
         if (e.touches && e.touches.length > 0) {
@@ -1154,16 +1188,14 @@
           startY = e.clientY;
         }
 
-        // Timer set to slightly longer than iOS native drag initiation
         longPressTimer = setTimeout(() => {
           longPressed = true;
-          // Pop the color picker immediately instead of waiting for the user to lift their finger!
-          if (!isDraggingOrMoved) {
-            openColorPicker(dragId);
-            // Quick haptic feedback pop if supported on iOS 17.4+/Android
+          // If the finger hasn't strayed, popup the Action Menu immediately!
+          if (!isFingerMoving) {
+            openActionMenu(dragId);
             if (navigator.vibrate) navigator.vibrate(50);
           }
-        }, 600); // 600ms hold
+        }, 500); 
       }
 
       function movePress(e) {
@@ -1176,21 +1208,18 @@
           currentY = e.clientY;
         }
 
-        // Allow up to 10px of finger "wiggle" before cancelling the color menu
-        // Touch screens are hyper-sensitive, so we need this deadzone!
+        // Allow up to 10px of finger "wiggle" before canceling the long-press
         if (Math.abs(currentX - startX) > 10 || Math.abs(currentY - startY) > 10) {
-          isDraggingOrMoved = true;
+          isFingerMoving = true;
           clearTimeout(longPressTimer);
         }
       }
 
       function endPress(e) {
         clearTimeout(longPressTimer);
-        // Delay resetting longPressed so the click handler can catch it and block playback
         setTimeout(() => { longPressed = false; }, 100);
       }
 
-      // Touch & Mouse bindings for the custom long-press detection
       card.addEventListener('touchstart', startPress, {passive: true});
       card.addEventListener('touchmove', movePress, {passive: true});
       card.addEventListener('touchend', endPress);
@@ -1199,27 +1228,63 @@
       card.addEventListener('mousemove', movePress);
       card.addEventListener('mouseup', endPress);
 
-      // Standard desktop Right-Click binding
       card.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        openColorPicker(dragId);
+        openActionMenu(dragId);
       });
 
-      // Standard Click / Play Event
+      // Unified Click Handler
       card.addEventListener("click", () => {
-        // Prevent audio from playing if we just closed the color picker or just triggered the long press
-        if (isColorPickerRecent || longPressed) return;
+        // If in Move Mode, intercept the click to swap places instead of playing audio
+        if (isMoveMode) {
+          if (dragId === moveSourceId) {
+             // Tapped itself: cancel move mode
+             isMoveMode = false;
+             moveSourceId = null;
+             setStatus("");
+             renderGrid();
+             return;
+          }
+          
+          // Tap-to-Swap Logic! 
+          const activeLayout = currentMode === Mode.PLAYLIST ? playlistLayout : songsLayout;
+          const storageKey = currentMode === Mode.PLAYLIST ? 'lax-playlist-layout' : 'lax-songs-layout';
+
+          const srcIdx = activeLayout.findIndex(x => x._dragId === moveSourceId);
+          const dstIdx = activeLayout.findIndex(x => x._dragId === dragId);
+
+          // Extract the selected card, insert it at the tapped card's position
+          if (srcIdx !== -1 && dstIdx !== -1) {
+            const [movedItem] = activeLayout.splice(srcIdx, 1);
+            activeLayout.splice(dstIdx, 0, movedItem);
+            
+            const newOrder = activeLayout.map(c => c._dragId);
+            localStorage.setItem(storageKey, JSON.stringify(newOrder));
+          }
+
+          isMoveMode = false;
+          moveSourceId = null;
+          setStatus("Button moved successfully!");
+          setTimeout(() => setStatus(""), 3000);
+          renderGrid();
+          return;
+        }
+
+        // Prevent audio from playing if we just closed the menu
+        if (isMenuRecent || longPressed) return;
 
         flashButton(card);
-        // If clicking the button that is already playing, stop/fade it
+        
+        // Toggle Stop logic
         if (card === currentButtonEl && currentAudioEl && !currentAudioEl.paused) {
           stopWithFade();
           return;
         }
+        
         onClick(card);
       });
 
-      // Drag Events
+      // Bind Desktop Drag Events (only works if draggable=true)
       card.addEventListener('dragstart', handleDragStart);
       card.addEventListener('dragenter', handleDragEnter);
       card.addEventListener('dragover',  handleDragOver);
@@ -1235,8 +1300,6 @@
 
       if(currentMode === Mode.PLAYLIST){
         grid.classList.add("playlist-grid");
-        // iPad landscape = ~1024px. 6 cols, 8px gaps = ~158px per card.
-        // Target 5 rows of ~110px = fits in ~650px content height.
         for(const s of playlistLayout){
           const src = `${AUDIO_BASE}/playlist/${encodeURIComponent(s.file)}`;
           const label = s.artist ? `${s.title} — ${s.artist}` : s.title;
@@ -1254,7 +1317,6 @@
               playAudio(src, label, el);
             }
           });
-          // Shrink font for long titles so they don't wrap to 3 lines
           const numEl = card.querySelector('.num');
           if(numEl){
             if(displayTitle.length > 30)      numEl.style.fontSize = '11px';
@@ -1277,7 +1339,6 @@
           topText = isMissing ? `-${item.num}-` : String(item.num);
           bottomText = item.name;
         } else {
-          // Extra item
           songSrc = `${AUDIO_BASE}/songs/${item.songFile}`;
           goalSrc = `${AUDIO_BASE}/goals/${item.goalFile}`;
           label = item.labelBottom ? `${item.labelBottom}` : item.labelTop;
@@ -1311,7 +1372,6 @@
     cacheBtn.addEventListener("click",    () => syncOffline());
 
     stopBtn.addEventListener("click", () => {
-      // Make it obvious the click registered
       const originalText = stopBtn.textContent;
       stopBtn.classList.add("stopping");
       stopBtn.textContent = "Stopping…";
