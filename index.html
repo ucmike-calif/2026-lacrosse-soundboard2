@@ -252,6 +252,15 @@
       --active-theme: var(--red);
     }
 
+    /* Custom Color Overrides */
+    .card.has-custom-color {
+      background: var(--custom-bg) !important;
+      border-color: var(--custom-border) !important;
+    }
+    .card.has-custom-color.playing {
+      border-color: var(--active-theme) !important;
+    }
+
     .card.missing{
       opacity: 0.5; /* Increased opacity for better readability */
       filter: grayscale(1);
@@ -391,6 +400,57 @@
       border-color: rgba(0,0,0,0.08);
       font-weight: 800;
     }
+
+    /* Custom Color Picker Modal Styles */
+    .color-picker-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    .color-picker-modal {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      width: 90%;
+      max-width: 320px;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    .color-swatch-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin: 20px 0;
+    }
+    .color-swatch {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 3px solid transparent;
+      transition: transform 0.1s;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+    }
+    .color-swatch:active {
+      transform: scale(0.9);
+    }
+    .color-swatch.default-swatch {
+      background: #f8f9fa;
+      border: 2px dashed #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: #999;
+      line-height: 1;
+    }
   </style>
 </head>
 
@@ -421,6 +481,16 @@
 
   <div class="gridwrap">
     <div id="grid" class="grid"></div>
+  </div>
+
+  <!-- Color Picker Modal -->
+  <div id="colorPickerOverlay" class="color-picker-overlay">
+    <div class="color-picker-modal">
+      <h3 style="margin-top:0; font-size:20px;">Button Color</h3>
+      <p style="font-size:14px; color:#666; margin-top:-10px;">Pick a color for this button.</p>
+      <div id="swatchContainer" class="color-swatch-grid"></div>
+      <button class="ctlbtn" style="width:100%; padding:12px; font-weight:bold;" onclick="closeColorPicker()">Close</button>
+    </div>
   </div>
 
   <script>
@@ -553,6 +623,72 @@
     const confirmText = document.getElementById("confirmText");
     const confirmCancel = document.getElementById("confirmCancel");
     const confirmGo = document.getElementById("confirmGo");
+
+    /*****************************************************************
+     * Custom Colors State & UI
+     *****************************************************************/
+    const colorPalette = [
+      { name: 'Red', bg: '#ffebee', border: '#ef9a9a' },
+      { name: 'Orange', bg: '#fff3e0', border: '#ffcc80' },
+      { name: 'Yellow', bg: '#fffde7', border: '#fff59d' },
+      { name: 'Green', bg: '#e8f5e9', border: '#a5d6a7' },
+      { name: 'Blue', bg: '#e3f2fd', border: '#90caf9' },
+      { name: 'Purple', bg: '#f3e5f5', border: '#ce93d8' },
+      { name: 'Pink', bg: '#fce4ec', border: '#f48fb1' },
+      { name: 'Gray', bg: '#f5f5f5', border: '#e0e0e0' }
+    ];
+
+    let cardColors = JSON.parse(localStorage.getItem('lax-card-colors') || '{}');
+    let targetDragIdForColor = null;
+    let isColorPickerRecent = false; // Prevent accidental clicks just after closing
+
+    function initColorPicker() {
+      const container = document.getElementById('swatchContainer');
+      
+      // Default (Reset) Swatch
+      const defSwatch = document.createElement('div');
+      defSwatch.className = 'color-swatch default-swatch';
+      defSwatch.innerHTML = '&times;';
+      defSwatch.onclick = () => selectColor(null, null);
+      container.appendChild(defSwatch);
+
+      // Color Swatches
+      colorPalette.forEach(c => {
+        const el = document.createElement('div');
+        el.className = 'color-swatch';
+        el.style.background = c.bg;
+        el.style.borderColor = c.border;
+        el.onclick = () => selectColor(c.bg, c.border);
+        container.appendChild(el);
+      });
+    }
+
+    function openColorPicker(dragId) {
+      targetDragIdForColor = dragId;
+      document.getElementById('colorPickerOverlay').style.display = 'flex';
+      
+      // Temporarily block card clicks so releasing the long press doesn't instantly play audio
+      isColorPickerRecent = true; 
+      setTimeout(() => isColorPickerRecent = false, 500);
+    }
+
+    function closeColorPicker() {
+      document.getElementById('colorPickerOverlay').style.display = 'none';
+      targetDragIdForColor = null;
+    }
+
+    function selectColor(bg, border) {
+      if (!targetDragIdForColor) return;
+      if (bg === null) {
+        delete cardColors[targetDragIdForColor];
+      } else {
+        cardColors[targetDragIdForColor] = { bg, border };
+      }
+      localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
+      renderGrid(); 
+      closeColorPicker();
+    }
+
 
     function setStatus(text){ status.textContent = text || ""; }
 
@@ -870,8 +1006,10 @@
 
     /* DRAG AND DROP HANDLERS */
     let dragSrcEl = null;
+    let isDraggingOrMoved = false; // Used to separate dragging from long-press coloring
 
     function handleDragStart(e) {
+      isDraggingOrMoved = true;
       dragSrcEl = this;
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/html', this.innerHTML);
@@ -932,6 +1070,13 @@
       card.dataset.dragId = dragId;
       card.setAttribute('draggable', 'true'); // Enables drag and drop
 
+      // Apply assigned colors if they exist
+      if (cardColors[dragId]) {
+        card.style.setProperty('--custom-bg', cardColors[dragId].bg);
+        card.style.setProperty('--custom-border', cardColors[dragId].border);
+        card.classList.add('has-custom-color');
+      }
+
       if(currentMode === Mode.SONGS)    card.classList.add("songModeTint");
       if(currentMode === Mode.GOAL)     card.classList.add("goalModeTint");
       if(currentMode === Mode.PLAYLIST) card.classList.add("playlistModeTint");
@@ -961,8 +1106,56 @@
       `;
       card.appendChild(playOverlay);
 
-      // Click Event
+      // --- Custom Long-Press Color Picker Logic ---
+      let longPressTimer;
+      let longPressed = false;
+
+      function startPress(e) {
+        if (e.button !== undefined && e.button !== 0) return; // Only process main touch/click
+        isDraggingOrMoved = false;
+        longPressed = false;
+        longPressTimer = setTimeout(() => {
+          longPressed = true;
+        }, 500); // 500ms hold
+      }
+
+      function movePress() {
+        isDraggingOrMoved = true;
+        clearTimeout(longPressTimer);
+        longPressed = false;
+      }
+
+      function endPress(e) {
+        clearTimeout(longPressTimer);
+        // If we held for 500ms and DID NOT trigger a move/drag, open color picker
+        if (longPressed && !isDraggingOrMoved) {
+          e.preventDefault();
+          e.stopPropagation();
+          openColorPicker(dragId);
+        }
+        longPressed = false;
+      }
+
+      // Touch & Mouse bindings for the custom long-press detection
+      card.addEventListener('touchstart', startPress, {passive: true});
+      card.addEventListener('touchmove', movePress, {passive: true});
+      card.addEventListener('touchend', endPress);
+      
+      card.addEventListener('mousedown', startPress);
+      card.addEventListener('mousemove', movePress);
+      card.addEventListener('mouseup', endPress);
+
+      // Standard desktop Right-Click binding
+      card.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openColorPicker(dragId);
+      });
+
+      // Standard Click / Play Event
       card.addEventListener("click", () => {
+        // Prevent audio from playing if we just closed the color picker or just long-pressed
+        if (isColorPickerRecent || longPressed) return;
+
         flashButton(card);
         // If clicking the button that is already playing, stop/fade it
         if (card === currentButtonEl && currentAudioEl && !currentAudioEl.paused) {
@@ -1095,6 +1288,7 @@
     });
 
     // Initial render
+    initColorPicker();
     renderGrid();
     setMode(Mode.SONGS);
   </script>
