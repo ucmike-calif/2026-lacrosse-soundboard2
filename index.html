@@ -591,6 +591,34 @@
     extras.forEach(x => songsLayout.push({ ...x, _type: 'extra', _dragId: 'extra_' + x.key }));
     const playlistLayout = playlist.map((p, i) => ({ ...p, _type: 'playlist', _dragId: 'playlist_' + i }));
 
+    // Restore saved layouts from LocalStorage
+    try {
+      const savedSongsOrder = JSON.parse(localStorage.getItem('lax-songs-layout'));
+      if (savedSongsOrder) {
+        songsLayout.sort((a, b) => {
+          let posA = savedSongsOrder.indexOf(a._dragId);
+          let posB = savedSongsOrder.indexOf(b._dragId);
+          // If a new player/item was added that isn't in saved layout, put it at the end
+          if(posA === -1) posA = 9999;
+          if(posB === -1) posB = 9999;
+          return posA - posB;
+        });
+      }
+
+      const savedPlaylistOrder = JSON.parse(localStorage.getItem('lax-playlist-layout'));
+      if (savedPlaylistOrder) {
+        playlistLayout.sort((a, b) => {
+          let posA = savedPlaylistOrder.indexOf(a._dragId);
+          let posB = savedPlaylistOrder.indexOf(b._dragId);
+          if(posA === -1) posA = 9999;
+          if(posB === -1) posB = 9999;
+          return posA - posB;
+        });
+      }
+    } catch(e) {
+      console.warn("Could not load saved layouts", e);
+    }
+
     const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal", PLAYLIST: "playlist" });
     let currentMode = Mode.SONGS;
 
@@ -1050,10 +1078,13 @@
           this.parentNode.insertBefore(dragSrcEl, this);
         }
 
-        // 2. Save order state so it persists across tab switches
+        // 2. Save order state so it persists across tab switches AND page reloads
         const activeLayout = currentMode === Mode.PLAYLIST ? playlistLayout : songsLayout;
+        const storageKey = currentMode === Mode.PLAYLIST ? 'lax-playlist-layout' : 'lax-songs-layout';
         const newOrder = Array.from(grid.children).map(c => c.dataset.dragId);
+        
         activeLayout.sort((a, b) => newOrder.indexOf(a._dragId) - newOrder.indexOf(b._dragId));
+        localStorage.setItem(storageKey, JSON.stringify(newOrder));
       }
       return false;
     }
