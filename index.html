@@ -171,7 +171,7 @@
       user-select: none;
       cursor: pointer;
       position: relative;
-      transition: transform 0.05s ease, background 0.2s ease;
+      transition: transform 0.05s ease, background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
       /* Improve touch responsiveness on iOS */
       touch-action: manipulation;
     }
@@ -218,8 +218,20 @@
       color: #555 !important;
     }
 
-    .card.songModeTint{ background: var(--greenTint); }
-    .card.playlistModeTint{ background: var(--purpleTint); }
+    /* Card Mode Themes */
+    .card.songModeTint{ 
+      background: var(--greenTint); 
+      --active-theme: var(--green);
+    }
+    .card.playlistModeTint{ 
+      background: var(--purpleTint); 
+      --active-theme: var(--purple);
+    }
+    .card.goalModeTint{ 
+      background: var(--redTint); 
+      --active-theme: var(--red);
+    }
+
     .card.missing{
       opacity: 0.5; /* Increased opacity for better readability */
       filter: grayscale(1);
@@ -233,15 +245,64 @@
       color: #444; /* Darkened text color */
       font-weight: 500;
     }
-    .card.goalModeTint{ background: var(--redTint); }
 
     .card:active{ transform: scale(0.985); }
 
     .card.flash{ outline: 3px solid rgba(0,0,0,0.14); }
 
+    /* Active Playback State Elements */
     .card.playing{
-      outline: 4px solid rgba(0,0,0,0.22);
-      box-shadow: 0 10px 20px rgba(0,0,0,0.14);
+      border-color: var(--active-theme);
+      transform: scale(1.02);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.18);
+      z-index: 2; /* Pop over neighboring cards */
+    }
+    
+    .play-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255, 255, 255, 0.75); /* Frosted glass effect */
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      border-radius: inherit;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .card.playing .play-overlay {
+      display: flex;
+    }
+
+    .progress-ring {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      /* Fills based on the --progress variable updated by JS */
+      background: conic-gradient(var(--active-theme) var(--progress, 0%), #374151 0%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+    }
+
+    .progress-ring-inner {
+      width: 44px;
+      height: 44px;
+      background: #111827; /* Dark background matching the uploaded icon */
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .pause-bar {
+      width: 6px;
+      height: 18px;
+      background: var(--active-theme);
+      border-radius: 2px;
     }
 
     .num{
@@ -480,6 +541,7 @@
     function clearPlayingHighlight(){
       if(currentButtonEl){
         currentButtonEl.classList.remove("playing");
+        currentButtonEl.style.removeProperty('--progress'); // Reset the progress ring
         currentButtonEl = null;
       }
     }
@@ -539,6 +601,9 @@
         stopImmediate();
         return;
       }
+
+      // Remove the active UI immediately so it feels responsive to the user
+      clearPlayingHighlight();
 
       if (fadeTimer){
         clearInterval(fadeTimer);
@@ -621,6 +686,15 @@
       audio.muted = false;
       audio.playsInline = true;
       currentAudioEl = audio;
+
+      // Track playback progress and inject to CSS Variable
+      const updateProgress = () => {
+        if (audio === currentAudioEl && buttonEl) {
+          const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+          buttonEl.style.setProperty('--progress', `${pct}%`);
+        }
+      };
+      audio.addEventListener('timeupdate', updateProgress);
 
       // Helpful error reporting (Safari will throw decode/MIME issues here)
       audio.addEventListener("error", () => {
@@ -790,8 +864,28 @@
       card.appendChild(num);
       card.appendChild(name);
 
+      // Add the active playing overlay with progress ring & pause icon
+      const playOverlay = document.createElement("div");
+      playOverlay.className = "play-overlay";
+      playOverlay.innerHTML = `
+        <div class="progress-ring">
+          <div class="progress-ring-inner">
+            <div class="pause-bar"></div>
+            <div class="pause-bar"></div>
+          </div>
+        </div>
+      `;
+      card.appendChild(playOverlay);
+
       card.addEventListener("click", () => {
         flashButton(card);
+        
+        // If clicking the button that is already playing, stop/fade it
+        if (card === currentButtonEl && currentAudioEl && !currentAudioEl.paused) {
+          stopWithFade();
+          return;
+        }
+        
         onClick(card);
       });
 
