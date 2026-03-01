@@ -807,7 +807,7 @@
       } else if (action === 'move') {
         isMoveMode = true;
         moveSourceId = activeActionId;
-        setStatus("Move Button");
+        setStatus("MOVE MODE: Tap destination to swap.");
         renderGrid(); 
       } else if (action === 'edit') {
         window.openEditModal(false, activeActionId);
@@ -891,13 +891,13 @@
 
       if (editingItemType === 'player') {
         const f = getPredictedFileNames(top, bot, 'player');
-        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the appropriate GitHub repository.`;
+        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
       } else if (editingItemType === 'extra') {
         const f = getPredictedFileNames(top, bot, 'extra');
-        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the appropriate GitHub repository.`;
+        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
       } else {
         const f = getPredictedFileNames(top, bot, 'playlist');
-        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the /audio/playlist/ folder in the appropriate GitHub repository.`;
+        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the /audio/playlist/ folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
       }
     }
 
@@ -1222,7 +1222,7 @@
         else if (currentMode === Mode.GOAL) folderPath = '/audio/goals/';
         
         // This triggers the new explicit modal you requested!
-        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in your repository and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div>`;
+        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div>`;
         document.getElementById('errorModalOverlay').style.display = 'flex';
         
         if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
