@@ -576,6 +576,15 @@
     </div>
   </div>
 
+  <!-- Missing Audio Error Modal -->
+  <div id="errorModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 450px;">
+      <h3 style="margin-top:0; font-size:22px; color: var(--red);">Audio File Not Found</h3>
+      <p id="errorMessageText" style="font-size:15px; color:#333; line-height: 1.5; margin-bottom: 24px; text-align: left;"></p>
+      <button class="ctlbtn go" style="width:100%; padding:12px; font-size:16px; border-radius: 10px;" onclick="document.getElementById('errorModalOverlay').style.display = 'none';">Got it</button>
+    </div>
+  </div>
+
   <script>
     // Try to register an external service worker for caching the HTML page itself.
     if ('serviceWorker' in navigator) {
@@ -864,7 +873,14 @@
         const keySafe = String(topText).trim().replace(/\s+/g, '_');
         return { song: `extras/${keySafe}.mp3`, goal: `extras/${keySafe}_Goal.mp3` };
       } else {
-        return { file: `${String(topText).trim()} - ${String(bottomText).trim()}.mp3` }; // Arbitrary default generator
+        // Updated playlist logic to correctly map standard formatting based on inputs
+        const title = String(topText).trim() || "[Song Title]";
+        const artist = String(bottomText).trim();
+        if (artist) {
+            return { file: `${artist} - ${title}.mp3` };
+        } else {
+            return { file: `${title}.mp3` };
+        }
       }
     }
 
@@ -880,7 +896,8 @@
         const f = getPredictedFileNames(top, bot, 'extra');
         box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the appropriate GitHub repository.`;
       } else {
-        box.innerHTML = `Please ensure your audio file is correctly named and placed in the /audio/playlist/ folder in the appropriate GitHub repository.`;
+        const f = getPredictedFileNames(top, bot, 'playlist');
+        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the /audio/playlist/ folder in the appropriate GitHub repository.`;
       }
     }
 
@@ -1022,9 +1039,11 @@
           if (targetItem) {
              const plIdx = activePlaylist.findIndex(p => p.title === targetItem.title && p.artist === targetItem.artist);
              if (plIdx > -1) {
-                // If they are just renaming, we update title and artist. 
+                // Update title, artist, AND exactly what the filename should now be predicted as!
+                const f = getPredictedFileNames(topStr, botStr, 'playlist');
                 activePlaylist[plIdx].title = topStr;
                 activePlaylist[plIdx].artist = botStr;
+                activePlaylist[plIdx].file = f.file;
              }
           }
         }
@@ -1197,8 +1216,14 @@
       audio.addEventListener("error", () => {
         const fullUrl = new URL(src, window.location.href).href; 
         const decodedName = decodeURIComponent(fullUrl.split('/').pop());
-        // Custom error message for missing files
-        setStatus(`Please add your audio file into the /audio/ folder in the appropriate GitHub repository and ensure it is named exactly ${decodedName}`);
+        
+        let folderPath = '/audio/songs/';
+        if (currentMode === Mode.PLAYLIST) folderPath = '/audio/playlist/';
+        else if (currentMode === Mode.GOAL) folderPath = '/audio/goals/';
+        
+        // This triggers the new explicit modal you requested!
+        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in your repository and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div>`;
+        document.getElementById('errorModalOverlay').style.display = 'flex';
         
         if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
           stopTrackImmediate(buttonEl);
@@ -1255,7 +1280,6 @@
         const cache = await caches.open('lax-audio-v1');
         const allUrls = [];
 
-        // Fix: Use the new active data arrays rather than the old default ones
         activePlayers.forEach(p => {
           if (!missingSongsSet.has(p.num)) allUrls.push(`${AUDIO_BASE}/songs/${p.songFile}`);
           allUrls.push(`${AUDIO_BASE}/goals/${p.goalFile}`);
