@@ -1034,10 +1034,8 @@
 
     /* DRAG AND DROP HANDLERS */
     let dragSrcEl = null;
-    let isDraggingOrMoved = false; // Used to separate dragging from long-press coloring
 
     function handleDragStart(e) {
-      isDraggingOrMoved = true;
       dragSrcEl = this;
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/html', this.innerHTML);
@@ -1137,34 +1135,59 @@
       `;
       card.appendChild(playOverlay);
 
-      // --- Custom Long-Press Color Picker Logic ---
+      // --- Custom Long-Press Color Picker Logic (iOS Touch Friendly) ---
       let longPressTimer;
       let longPressed = false;
+      let isDraggingOrMoved = false; 
+      let startX = 0, startY = 0;
 
       function startPress(e) {
-        if (e.button !== undefined && e.button !== 0) return; // Only process main touch/click
+        if (e.type === 'mousedown' && e.button !== 0) return; // Only process main touch/click
         isDraggingOrMoved = false;
         longPressed = false;
+        
+        if (e.touches && e.touches.length > 0) {
+          startX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
+        } else {
+          startX = e.clientX;
+          startY = e.clientY;
+        }
+
+        // Timer set to slightly longer than iOS native drag initiation
         longPressTimer = setTimeout(() => {
           longPressed = true;
-        }, 500); // 500ms hold
+          // Pop the color picker immediately instead of waiting for the user to lift their finger!
+          if (!isDraggingOrMoved) {
+            openColorPicker(dragId);
+            // Quick haptic feedback pop if supported on iOS 17.4+/Android
+            if (navigator.vibrate) navigator.vibrate(50);
+          }
+        }, 600); // 600ms hold
       }
 
-      function movePress() {
-        isDraggingOrMoved = true;
-        clearTimeout(longPressTimer);
-        longPressed = false;
+      function movePress(e) {
+        let currentX = 0, currentY = 0;
+        if (e.touches && e.touches.length > 0) {
+          currentX = e.touches[0].clientX;
+          currentY = e.touches[0].clientY;
+        } else {
+          currentX = e.clientX;
+          currentY = e.clientY;
+        }
+
+        // Allow up to 10px of finger "wiggle" before cancelling the color menu
+        // Touch screens are hyper-sensitive, so we need this deadzone!
+        if (Math.abs(currentX - startX) > 10 || Math.abs(currentY - startY) > 10) {
+          isDraggingOrMoved = true;
+          clearTimeout(longPressTimer);
+        }
       }
 
       function endPress(e) {
         clearTimeout(longPressTimer);
-        // If we held for 500ms and DID NOT trigger a move/drag, open color picker
-        if (longPressed && !isDraggingOrMoved) {
-          e.preventDefault();
-          e.stopPropagation();
-          openColorPicker(dragId);
-        }
-        longPressed = false;
+        // Delay resetting longPressed so the click handler can catch it and block playback
+        setTimeout(() => { longPressed = false; }, 100);
       }
 
       // Touch & Mouse bindings for the custom long-press detection
@@ -1184,7 +1207,7 @@
 
       // Standard Click / Play Event
       card.addEventListener("click", () => {
-        // Prevent audio from playing if we just closed the color picker or just long-pressed
+        // Prevent audio from playing if we just closed the color picker or just triggered the long press
         if (isColorPickerRecent || longPressed) return;
 
         flashButton(card);
