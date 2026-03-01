@@ -114,7 +114,7 @@
       outline: 2px solid rgba(0,0,0,0.20);
     }
     
-    #cacheBtn {
+    #cacheBtn, #exportBtn {
       font-weight: 600;
       color: #333;
     }
@@ -129,7 +129,8 @@
     .status{
       padding: 10px 16px 0;
       color: var(--muted);
-      font-size: 15px;
+      font-size: 14px;
+      line-height: 1.3;
       min-height: 22px;
     }
 
@@ -177,6 +178,23 @@
       touch-action: manipulation;
       -webkit-touch-callout: none;
       -webkit-user-drag: element;
+    }
+
+    /* Add Card Special Styling */
+    .card.add-card {
+      border: 2px dashed #999;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: none;
+      opacity: 0.6;
+      min-height: 80px;
+    }
+    .card.add-card:active {
+      opacity: 1;
+      background: rgba(0,0,0,0.05);
+      transform: scale(0.98);
     }
 
     /* Ensures drag events properly trigger on the main card container */
@@ -297,7 +315,7 @@
       font-weight: 500;
     }
 
-    .card:active{ transform: scale(0.985); }
+    .card:not(.add-card):active{ transform: scale(0.985); }
 
     .card.flash{ outline: 3px solid rgba(0,0,0,0.14); }
 
@@ -396,6 +414,48 @@
       box-shadow: 0 10px 30px rgba(0,0,0,0.2);
     }
 
+    /* Edit/Add Modal specific styles */
+    .edit-input-group {
+      margin-bottom: 12px;
+      text-align: left;
+    }
+    .edit-input-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 4px;
+      color: #333;
+    }
+    .edit-input-group input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    .edit-checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      text-align: left;
+      margin-bottom: 16px;
+      color: #333;
+      font-weight: bold;
+    }
+    .edit-instructions {
+      background: #f8f9fa;
+      padding: 12px;
+      font-size: 13px;
+      color: #444;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      text-align: left;
+      line-height: 1.4;
+      border: 1px dashed #ccc;
+    }
+
     /* Custom Color Picker Menu */
     .color-swatch-grid {
       display: flex;
@@ -441,6 +501,7 @@
     <button id="playlistTab" class="tabbtn" type="button"><span class="playlistText">Playlist</span></button>
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
     <button id="cacheBtn" class="ctlbtn" type="button" title="Download all audio to device for offline use">Offline Sync</button>
+    <button id="exportBtn" class="ctlbtn" type="button" onclick="showExportCode()">Export Code</button>
   </div>
 
   <div id="status" class="status"></div>
@@ -455,10 +516,53 @@
       <h3 style="margin-top:0; font-size:20px;">Button Options</h3>
       <p style="font-size:14px; color:#666; margin-top:-10px;">What would you like to do?</p>
       <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">
+        <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('edit')">Edit Button</button>
         <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('move')">Move Button</button>
         <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('color')">Change Color</button>
+        <button class="ctlbtn" style="background: #ffebee; color: #b30000; font-weight:bold; border-color:#ef9a9a;" onclick="handleActionSelection('delete')">Delete Button</button>
         <button class="ctlbtn" style="background: #fff; color: #555; font-weight:bold; margin-top: 8px;" onclick="closeActionMenu()">Cancel</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Add/Edit Modal -->
+  <div id="editModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 400px;">
+      <h3 id="editModalTitle" style="margin-top:0; font-size:20px;">Edit Button</h3>
+      
+      <div class="edit-input-group">
+        <label id="editTopLabel">Player Number</label>
+        <input type="text" id="editTopInput" placeholder="e.g. 4" oninput="updateEditInstructions()" />
+      </div>
+      
+      <div class="edit-input-group">
+        <label id="editBottomLabel">Player Name</label>
+        <input type="text" id="editBottomInput" placeholder="e.g. Jane Doe" oninput="updateEditInstructions()" />
+      </div>
+      
+      <div class="edit-checkbox-group">
+        <input type="checkbox" id="editMissingInput" style="transform: scale(1.3); margin-right: 6px;" />
+        <label for="editMissingInput" style="margin:0; cursor:pointer;">No sound file assigned (Gray out button)</label>
+      </div>
+      
+      <div class="edit-instructions" id="editInstructions">
+        <!-- Dynamic instructions appear here -->
+      </div>
+      
+      <div style="display: flex; gap: 10px;">
+        <button class="ctlbtn" style="flex:1;" onclick="closeEditModal()">Cancel</button>
+        <button class="ctlbtn go" style="flex:1; background:var(--green); border-color:var(--green);" onclick="saveEditModal()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Code Modal -->
+  <div id="exportModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 600px; width: 95%;">
+      <h3 style="margin-top:0; font-size:20px;">Export Configuration</h3>
+      <p style="font-size:13px; color:#666; text-align:left; margin-top:-10px;">Copy the code below and replace the arrays in your <code>index.html</code> file to make these changes permanent for everyone.</p>
+      <textarea id="exportTextArea" style="width:100%; height:300px; font-family:monospace; font-size:12px; padding:10px; box-sizing:border-box; border: 1px solid #ccc; border-radius: 8px;"></textarea>
+      <button class="ctlbtn go" style="width:100%; margin-top:16px; background:var(--purple); border-color:var(--purple);" onclick="document.getElementById('exportModalOverlay').style.display = 'none';">Close</button>
     </div>
   </div>
 
@@ -483,17 +587,17 @@
     }
 
     /*****************************************************************
-     * EDIT HERE: Folder structure + roster + file naming
+     * DEFAULT APP DATA 
      *****************************************************************/
     const AUDIO_BASE = "audio"; // repo path: /audio/...
 
     const FADE_TOTAL_SEC = 4.0; 
     const FADE_HOLD_SEC  = 1.0; 
 
-    // Players missing SONG files (easy to undo: remove numbers from this set)
-    const MISSING_SONG_NUMS = new Set([2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30]);
+    // Default missing items
+    const defaultMissingSongs = [2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30];
 
-    const players = [
+    const defaultPlayers = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
       { num: 2,  name: "Hayden Nicholas",             songFile: "02_Hayden_Nicholas.mp3",              goalFile: "02_Hayden_Nicholas_Goal.mp3" },
       { num: 3,  name: "Corinne Negrete",             songFile: "03_Corinne_Negrete.mp3",              goalFile: "03_Corinne_Negrete_Goal.mp3" },
@@ -516,14 +620,14 @@
       { num: 31, name: "Ava Reed",                    songFile: "31_Ava_Reed.mp3",                     goalFile: "31_Ava_Reed_Goal.mp3" },
     ];
 
-    const extras = [
+    const defaultExtras = [
       { key: "Anthem", labelTop: "Anthem", labelBottom: "National Anthem", songFile: "extras/Anthem.mp3", goalFile: "extras/Anthem_Goal.mp3" },
       { key: "TBD 1", labelTop: "Oh Yeah", labelBottom: "After Nat'l Anthem", songFile: "extras/TBD_1.mp3", goalFile: "extras/TBD_1_Goal.mp3" },
       { key: "TBD 2", labelTop: "Neigh-Gallop", labelBottom: "Post-Goal", songFile: "extras/TBD_2.mp3", goalFile: "extras/TBD_2_Goal.mp3" },
       { key: "TBD 3", labelTop: "Mustang Sally", labelBottom: "After a Win", songFile: "extras/TBD_3.mp3", goalFile: "extras/TBD_3_Goal.mp3" },
     ];
 
-    const playlist = [
+    const defaultPlaylist = [
       { title: "Hells Bells (Instrumental)",                 artist: "AC/DC",                                    file: "ACDC - Hells Bells (Instrumental).mp3" },
       { title: "Banana Clipper (Instrumental)",              artist: "Run The Jewels",                           file: "Banana Clipper Instrumental.mp3" },
       { title: "Sabotage (Instrumental)",                    artist: "Beastie Boys",                             file: "Beastie Boys-Sabotage ( Instrumental ).mp3" },
@@ -561,38 +665,56 @@
     ];
 
     /*****************************************************************
-     * State Layout Mapping (Allows visual dragging & saving order)
+     * DYNAMIC DATA MANAGEMENT (Local Storage Merging)
      *****************************************************************/
-    const songsLayout = players.map(p => ({ ...p, _type: 'player', _dragId: 'player_' + p.num }));
-    extras.forEach(x => songsLayout.push({ ...x, _type: 'extra', _dragId: 'extra_' + x.key }));
-    const playlistLayout = playlist.map((p, i) => ({ ...p, _type: 'playlist', _dragId: 'playlist_' + i }));
+    let activePlayers = JSON.parse(localStorage.getItem('lax-players')) || defaultPlayers;
+    let activeExtras = JSON.parse(localStorage.getItem('lax-extras')) || defaultExtras;
+    let activePlaylist = JSON.parse(localStorage.getItem('lax-playlist')) || defaultPlaylist;
+    let missingSongsSet = new Set(JSON.parse(localStorage.getItem('lax-missing')) || defaultMissingSongs);
 
-    // Restore saved layouts from LocalStorage
-    try {
-      const savedSongsOrder = JSON.parse(localStorage.getItem('lax-songs-layout'));
-      if (savedSongsOrder) {
-        songsLayout.sort((a, b) => {
-          let posA = savedSongsOrder.indexOf(a._dragId);
-          let posB = savedSongsOrder.indexOf(b._dragId);
-          if(posA === -1) posA = 9999;
-          if(posB === -1) posB = 9999;
-          return posA - posB;
-        });
-      }
-
-      const savedPlaylistOrder = JSON.parse(localStorage.getItem('lax-playlist-layout'));
-      if (savedPlaylistOrder) {
-        playlistLayout.sort((a, b) => {
-          let posA = savedPlaylistOrder.indexOf(a._dragId);
-          let posB = savedPlaylistOrder.indexOf(b._dragId);
-          if(posA === -1) posA = 9999;
-          if(posB === -1) posB = 9999;
-          return posA - posB;
-        });
-      }
-    } catch(e) {
-      console.warn("Could not load saved layouts", e);
+    function saveAllData() {
+      localStorage.setItem('lax-players', JSON.stringify(activePlayers));
+      localStorage.setItem('lax-extras', JSON.stringify(activeExtras));
+      localStorage.setItem('lax-playlist', JSON.stringify(activePlaylist));
+      localStorage.setItem('lax-missing', JSON.stringify(Array.from(missingSongsSet)));
     }
+
+    let songsLayout = [];
+    let playlistLayout = [];
+
+    function buildLayouts() {
+      songsLayout = activePlayers.map(p => ({ ...p, _type: 'player', _dragId: 'player_' + p.num }));
+      activeExtras.forEach(x => songsLayout.push({ ...x, _type: 'extra', _dragId: 'extra_' + x.key }));
+      playlistLayout = activePlaylist.map((p, i) => ({ ...p, _type: 'playlist', _dragId: 'playlist_' + i }));
+
+      // Restore saved orders
+      try {
+        const savedSongsOrder = JSON.parse(localStorage.getItem('lax-songs-layout'));
+        if (savedSongsOrder) {
+          songsLayout.sort((a, b) => {
+            let posA = savedSongsOrder.indexOf(a._dragId);
+            let posB = savedSongsOrder.indexOf(b._dragId);
+            if(posA === -1) posA = 9999;
+            if(posB === -1) posB = 9999;
+            return posA - posB;
+          });
+        }
+
+        const savedPlaylistOrder = JSON.parse(localStorage.getItem('lax-playlist-layout'));
+        if (savedPlaylistOrder) {
+          playlistLayout.sort((a, b) => {
+            let posA = savedPlaylistOrder.indexOf(a._dragId);
+            let posB = savedPlaylistOrder.indexOf(b._dragId);
+            if(posA === -1) posA = 9999;
+            if(posB === -1) posB = 9999;
+            return posA - posB;
+          });
+        }
+      } catch(e) {
+        console.warn("Could not load saved layouts", e);
+      }
+    }
+    buildLayouts(); // Run initially
 
     const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal", PLAYLIST: "playlist" });
     let currentMode = Mode.SONGS;
@@ -613,9 +735,10 @@
     const playlistTab = document.getElementById("playlistTab");
     const stopBtn     = document.getElementById("stopBtn");
     const cacheBtn    = document.getElementById("cacheBtn");
+    const exportBtn   = document.getElementById("exportBtn");
 
     /*****************************************************************
-     * Custom Action Menu & Color Picker Logic
+     * CUSTOM UI MODALS & MENUS
      *****************************************************************/
     const colorPalette = [
       { name: 'Red', bg: '#ffebee', border: '#ef9a9a' },
@@ -630,14 +753,17 @@
 
     let cardColors = JSON.parse(localStorage.getItem('lax-card-colors') || '{}');
     
-    // UI State flags to handle the new Menu & Move flows
     let activeActionId = null;
     let isMenuRecent = false; 
     let isMoveMode = false;
     let moveSourceId = null;
 
+    let isEditModeNew = false;
+    let editingItemType = null; // 'player', 'extra', 'playlist'
+
     function initColorPicker() {
       const container = document.getElementById('swatchContainer');
+      if (!container) return; // safety check
       const defSwatch = document.createElement('div');
       defSwatch.className = 'color-swatch default-swatch';
       defSwatch.innerHTML = '&times;';
@@ -654,30 +780,36 @@
       });
     }
 
-    function openActionMenu(dragId) {
+    window.openActionMenu = function(dragId) {
       activeActionId = dragId;
       document.getElementById('actionMenuOverlay').style.display = 'flex';
       isMenuRecent = true; 
       setTimeout(() => isMenuRecent = false, 500);
     }
 
-    function closeActionMenu() {
+    window.closeActionMenu = function() {
       document.getElementById('actionMenuOverlay').style.display = 'none';
     }
 
-    function handleActionSelection(action) {
-      closeActionMenu();
+    window.handleActionSelection = function(action) {
+      window.closeActionMenu();
       if (action === 'color') {
         document.getElementById('colorPickerOverlay').style.display = 'flex';
       } else if (action === 'move') {
         isMoveMode = true;
         moveSourceId = activeActionId;
         setStatus("MOVE MODE: Tap destination to swap.");
-        renderGrid(); // Redraws to show the moving-source border effects
+        renderGrid(); 
+      } else if (action === 'edit') {
+        window.openEditModal(false, activeActionId);
+      } else if (action === 'delete') {
+        if (confirm("Are you sure you want to remove this button?")) {
+           deleteButton(activeActionId);
+        }
       }
     }
 
-    function closeColorPicker() {
+    window.closeColorPicker = function() {
       document.getElementById('colorPickerOverlay').style.display = 'none';
       activeActionId = null;
     }
@@ -691,10 +823,234 @@
       }
       localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
       renderGrid(); 
-      closeColorPicker();
+      window.closeColorPicker();
+    }
+
+    /*****************************************************************
+     * ADD/EDIT BUTTON LOGIC
+     *****************************************************************/
+    function deleteButton(dragId) {
+      // Find and remove from correct array
+      if (dragId.startsWith('player_')) {
+        const num = Number(dragId.replace('player_', ''));
+        activePlayers = activePlayers.filter(p => p.num !== num);
+        missingSongsSet.delete(num);
+      } else if (dragId.startsWith('extra_')) {
+        const key = dragId.replace('extra_', '');
+        activeExtras = activeExtras.filter(e => e.key !== key);
+      } else if (dragId.startsWith('playlist_')) {
+        const itemToRemove = playlistLayout.find(p => p._dragId === dragId);
+        if(itemToRemove) {
+          activePlaylist = activePlaylist.filter(p => p.title !== itemToRemove.title || p.artist !== itemToRemove.artist);
+        }
+      }
+      
+      delete cardColors[dragId];
+      localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
+      
+      saveAllData();
+      buildLayouts();
+      renderGrid();
+    }
+
+    function getPredictedFileNames(topText, bottomText, type) {
+      if (type === 'player') {
+        const num = Number(topText);
+        if (isNaN(num)) return { song: "INVALID_NUMBER.mp3", goal: "INVALID_NUMBER_Goal.mp3" };
+        const numStr = String(num).padStart(2, '0');
+        const nameSafe = String(bottomText).trim().replace(/\s+/g, '_');
+        return { song: `${numStr}_${nameSafe}.mp3`, goal: `${numStr}_${nameSafe}_Goal.mp3` };
+      } else if (type === 'extra') {
+        const keySafe = String(topText).trim().replace(/\s+/g, '_');
+        return { song: `extras/${keySafe}.mp3`, goal: `extras/${keySafe}_Goal.mp3` };
+      } else {
+        return { file: `${String(topText).trim()} - ${String(bottomText).trim()}.mp3` }; // Arbitrary default generator
+      }
+    }
+
+    window.updateEditInstructions = function() {
+      const top = document.getElementById('editTopInput').value;
+      const bot = document.getElementById('editBottomInput').value;
+      const box = document.getElementById('editInstructions');
+
+      if (editingItemType === 'player') {
+        const f = getPredictedFileNames(top, bot, 'player');
+        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the appropriate GitHub repository.`;
+      } else if (editingItemType === 'extra') {
+        const f = getPredictedFileNames(top, bot, 'extra');
+        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the appropriate GitHub repository.`;
+      } else {
+        box.innerHTML = `Please ensure your audio file is correctly named and placed in the /audio/playlist/ folder in the appropriate GitHub repository.`;
+      }
+    }
+
+    window.openEditModal = function(isNew, dragId = null) {
+      isEditModeNew = isNew;
+      activeActionId = dragId;
+
+      const topLabel = document.getElementById('editTopLabel');
+      const bottomLabel = document.getElementById('editBottomLabel');
+      const topInput = document.getElementById('editTopInput');
+      const bottomInput = document.getElementById('editBottomInput');
+      const missingInput = document.getElementById('editMissingInput');
+
+      if (isNew) {
+        document.getElementById('editModalTitle').textContent = "Add New Button";
+        topInput.value = "";
+        bottomInput.value = "";
+        missingInput.checked = true; // Default new buttons to missing until uploaded
+
+        if (currentMode === Mode.PLAYLIST) {
+          editingItemType = 'playlist';
+          topLabel.textContent = "Song Title";
+          bottomLabel.textContent = "Artist";
+          missingInput.parentElement.style.display = 'none'; // Playlist items don't use the dash system
+        } else {
+          // Assume Player for Songs/Goals page
+          editingItemType = 'player';
+          topLabel.textContent = "Player Number";
+          bottomLabel.textContent = "Player Name";
+          missingInput.parentElement.style.display = 'flex';
+        }
+      } else {
+        document.getElementById('editModalTitle').textContent = "Edit Button";
+        let targetItem;
+        
+        if (dragId.startsWith('player_')) {
+          editingItemType = 'player';
+          topLabel.textContent = "Player Number";
+          bottomLabel.textContent = "Player Name";
+          missingInput.parentElement.style.display = 'flex';
+          
+          targetItem = activePlayers.find(p => p.num == dragId.replace('player_', ''));
+          if (targetItem) {
+            topInput.value = targetItem.num;
+            bottomInput.value = targetItem.name;
+            missingInput.checked = missingSongsSet.has(targetItem.num);
+          }
+        } else if (dragId.startsWith('extra_')) {
+          editingItemType = 'extra';
+          topLabel.textContent = "Top Text";
+          bottomLabel.textContent = "Bottom Text";
+          missingInput.parentElement.style.display = 'none'; // Extras don't use dash system in current build
+
+          targetItem = activeExtras.find(e => e.key == dragId.replace('extra_', ''));
+          if (targetItem) {
+            topInput.value = targetItem.labelTop;
+            bottomInput.value = targetItem.labelBottom;
+          }
+        } else {
+          editingItemType = 'playlist';
+          topLabel.textContent = "Song Title";
+          bottomLabel.textContent = "Artist";
+          missingInput.parentElement.style.display = 'none';
+
+          targetItem = playlistLayout.find(p => p._dragId == dragId);
+          if (targetItem) {
+            topInput.value = targetItem.title;
+            bottomInput.value = targetItem.artist;
+          }
+        }
+      }
+
+      window.updateEditInstructions();
+      document.getElementById('editModalOverlay').style.display = 'flex';
+    }
+
+    window.closeEditModal = function() {
+      document.getElementById('editModalOverlay').style.display = 'none';
+      activeActionId = null;
+    }
+
+    window.saveEditModal = function() {
+      const topStr = document.getElementById('editTopInput').value.trim();
+      const botStr = document.getElementById('editBottomInput').value.trim();
+      const isMissing = document.getElementById('editMissingInput').checked;
+
+      if (!topStr) {
+        alert("Please enter the top text/number.");
+        return;
+      }
+
+      if (isEditModeNew) {
+        if (editingItemType === 'player') {
+          const num = Number(topStr);
+          const f = getPredictedFileNames(num, botStr, 'player');
+          activePlayers.push({ num: num, name: botStr, songFile: f.song, goalFile: f.goal });
+          if (isMissing) missingSongsSet.add(num);
+          else missingSongsSet.delete(num);
+        } else if (editingItemType === 'playlist') {
+          const f = getPredictedFileNames(topStr, botStr, 'playlist');
+          activePlaylist.push({ title: topStr, artist: botStr, file: f.file });
+        }
+      } else {
+        // Editing existing
+        if (editingItemType === 'player') {
+          const oldNum = Number(activeActionId.replace('player_', ''));
+          const newNum = Number(topStr);
+          const pIdx = activePlayers.findIndex(p => p.num === oldNum);
+          if (pIdx > -1) {
+            const f = getPredictedFileNames(newNum, botStr, 'player');
+            activePlayers[pIdx].num = newNum;
+            activePlayers[pIdx].name = botStr;
+            activePlayers[pIdx].songFile = f.song;
+            activePlayers[pIdx].goalFile = f.goal;
+            
+            // Handle missing state changes
+            missingSongsSet.delete(oldNum);
+            if (isMissing) missingSongsSet.add(newNum);
+
+            // Port over color properties to new ID if number changed
+            if (oldNum !== newNum && cardColors[activeActionId]) {
+              cardColors['player_' + newNum] = cardColors[activeActionId];
+              delete cardColors[activeActionId];
+              localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
+            }
+          }
+        } else if (editingItemType === 'extra') {
+          const key = activeActionId.replace('extra_', '');
+          const eIdx = activeExtras.findIndex(e => e.key === key);
+          if (eIdx > -1) {
+            activeExtras[eIdx].labelTop = topStr;
+            activeExtras[eIdx].labelBottom = botStr;
+            const f = getPredictedFileNames(topStr, botStr, 'extra');
+            activeExtras[eIdx].songFile = f.song;
+            activeExtras[eIdx].goalFile = f.goal;
+          }
+        } else if (editingItemType === 'playlist') {
+          const targetItem = playlistLayout.find(p => p._dragId == activeActionId);
+          if (targetItem) {
+             const plIdx = activePlaylist.findIndex(p => p.title === targetItem.title && p.artist === targetItem.artist);
+             if (plIdx > -1) {
+                // If they are just renaming, we update title and artist. 
+                activePlaylist[plIdx].title = topStr;
+                activePlaylist[plIdx].artist = botStr;
+             }
+          }
+        }
+      }
+
+      saveAllData();
+      buildLayouts();
+      window.closeEditModal();
+      renderGrid();
+    }
+
+    window.showExportCode = function() {
+      let code = `// COPY AND PASTE THIS TO REPLACE THE ARRAYS IN YOUR index.html\n\n`;
+      code += `const defaultMissingSongs = ${JSON.stringify(Array.from(missingSongsSet))};\n\n`;
+      code += `const defaultPlayers = ${JSON.stringify(activePlayers, null, 2)};\n\n`;
+      code += `const defaultExtras = ${JSON.stringify(activeExtras, null, 2)};\n\n`;
+      code += `const defaultPlaylist = ${JSON.stringify(activePlaylist, null, 2)};\n`;
+      
+      document.getElementById('exportTextArea').value = code;
+      document.getElementById('exportModalOverlay').style.display = 'flex';
     }
 
 
+    /*****************************************************************
+     * PLAYBACK LOGIC
+     *****************************************************************/
     function setStatus(text){ status.textContent = text || ""; }
 
     function flashButton(el){
@@ -797,8 +1153,6 @@
     }
 
     async function playAudio(src, label, buttonEl){
-      // Note: We no longer call stopImmediate() here, allowing simultaneous audio tracks!
-      
       await unlockAudio();
       const ctx = ensureAudioContext();
       if (ctx.state === "suspended"){
@@ -841,9 +1195,11 @@
       audio.addEventListener('timeupdate', updateProgress);
 
       audio.addEventListener("error", () => {
-        const code = audio?.error?.code;
         const fullUrl = new URL(src, window.location.href).href; 
-        setStatus(`Audio error (code ${code || "?"}): ${fullUrl}`);
+        const decodedName = decodeURIComponent(fullUrl.split('/').pop());
+        // Custom error message for missing files
+        setStatus(`Please add your audio file into the /audio/ folder in the appropriate GitHub repository and ensure it is named exactly ${decodedName}`);
+        
         if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
           stopTrackImmediate(buttonEl);
         }
@@ -862,7 +1218,6 @@
         gainNode = null;
       }
 
-      // If this specific button was already playing, stop its previous sound first
       if (activeTracks.has(buttonEl)) {
         stopTrackImmediate(buttonEl);
       }
@@ -885,10 +1240,6 @@
         await audio.play();
       } catch (err){
         console.error("PLAY ERROR:", err);
-        setStatus(`Playback blocked: tap again (${err?.name || "error"})`);
-        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
-          stopTrackImmediate(buttonEl);
-        }
       }
     }
 
@@ -904,15 +1255,16 @@
         const cache = await caches.open('lax-audio-v1');
         const allUrls = [];
 
-        players.forEach(p => {
-          if (!MISSING_SONG_NUMS.has(p.num)) allUrls.push(`${AUDIO_BASE}/songs/${p.songFile}`);
+        // Fix: Use the new active data arrays rather than the old default ones
+        activePlayers.forEach(p => {
+          if (!missingSongsSet.has(p.num)) allUrls.push(`${AUDIO_BASE}/songs/${p.songFile}`);
           allUrls.push(`${AUDIO_BASE}/goals/${p.goalFile}`);
         });
-        extras.forEach(x => {
+        activeExtras.forEach(x => {
           allUrls.push(`${AUDIO_BASE}/songs/${x.songFile}`);
           allUrls.push(`${AUDIO_BASE}/goals/${x.goalFile}`);
         });
-        playlist.forEach(s => {
+        activePlaylist.forEach(s => {
           allUrls.push(`${AUDIO_BASE}/playlist/${encodeURIComponent(s.file)}`);
         });
 
@@ -986,7 +1338,7 @@
       setStatus("");
     }
 
-    /* DESKTOP DRAG AND DROP HANDLERS (Still enabled for Mouse users) */
+    /* DRAG AND DROP HANDLERS */
     let dragSrcEl = null;
 
     function handleDragStart(e) {
@@ -1005,7 +1357,7 @@
     }
 
     function handleDragEnter(e) {
-      if (this !== dragSrcEl) {
+      if (this !== dragSrcEl && !this.classList.contains('add-card')) {
         this.classList.add('over');
       }
     }
@@ -1018,6 +1370,8 @@
       if (e.stopPropagation) {
         e.stopPropagation();
       }
+      if (this.classList.contains('add-card')) return false; // Can't drop on the add button
+      
       if (dragSrcEl !== this) {
         const gridNodes = Array.from(grid.children);
         const srcIndex = gridNodes.indexOf(dragSrcEl);
@@ -1031,7 +1385,11 @@
 
         const activeLayout = currentMode === Mode.PLAYLIST ? playlistLayout : songsLayout;
         const storageKey = currentMode === Mode.PLAYLIST ? 'lax-playlist-layout' : 'lax-songs-layout';
-        const newOrder = Array.from(grid.children).map(c => c.dataset.dragId);
+        
+        // Exclude the Add card when saving order
+        const newOrder = Array.from(grid.children)
+                              .filter(c => !c.classList.contains('add-card'))
+                              .map(c => c.dataset.dragId);
         
         activeLayout.sort((a, b) => newOrder.indexOf(a._dragId) - newOrder.indexOf(b._dragId));
         localStorage.setItem(storageKey, JSON.stringify(newOrder));
@@ -1050,12 +1408,10 @@
       card.className = "card";
       card.dataset.dragId = dragId;
       
-      // If we are currently using Tap-to-Move, disable traditional desktop dragging so they don't clash
       if (!isMoveMode) {
         card.setAttribute('draggable', 'true'); 
       }
 
-      // Assign Tap-to-Move CSS classes if active
       if (isMoveMode) {
         if (dragId === moveSourceId) card.classList.add("moving-source");
         else card.classList.add("moving-target");
@@ -1095,12 +1451,10 @@
       `;
       card.appendChild(playOverlay);
 
-      // Restore active UI state if this card was re-rendered while playing
       if (activeTracks.has(card)) {
           card.classList.add("playing");
       }
 
-      // --- iOS Touch Friendly Long-Press Menu Logic ---
       let longPressTimer;
       let longPressed = false;
       let isFingerMoving = false; 
@@ -1121,9 +1475,8 @@
 
         longPressTimer = setTimeout(() => {
           longPressed = true;
-          // If the finger hasn't strayed, popup the Action Menu immediately!
           if (!isFingerMoving) {
-            openActionMenu(dragId);
+            window.openActionMenu(dragId);
             if (navigator.vibrate) navigator.vibrate(50);
           }
         }, 500); 
@@ -1139,7 +1492,6 @@
           currentY = e.clientY;
         }
 
-        // Allow up to 10px of finger "wiggle" before canceling the long-press
         if (Math.abs(currentX - startX) > 10 || Math.abs(currentY - startY) > 10) {
           isFingerMoving = true;
           clearTimeout(longPressTimer);
@@ -1161,15 +1513,12 @@
 
       card.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        openActionMenu(dragId);
+        window.openActionMenu(dragId);
       });
 
-      // Unified Click Handler
       card.addEventListener("click", () => {
-        // If in Move Mode, intercept the click to swap places instead of playing audio
         if (isMoveMode) {
           if (dragId === moveSourceId) {
-             // Tapped itself: cancel move mode
              isMoveMode = false;
              moveSourceId = null;
              setStatus("");
@@ -1177,14 +1526,12 @@
              return;
           }
           
-          // Tap-to-Swap Logic! 
           const activeLayout = currentMode === Mode.PLAYLIST ? playlistLayout : songsLayout;
           const storageKey = currentMode === Mode.PLAYLIST ? 'lax-playlist-layout' : 'lax-songs-layout';
 
           const srcIdx = activeLayout.findIndex(x => x._dragId === moveSourceId);
           const dstIdx = activeLayout.findIndex(x => x._dragId === dragId);
 
-          // Extract the selected card, insert it at the tapped card's position
           if (srcIdx !== -1 && dstIdx !== -1) {
             const [movedItem] = activeLayout.splice(srcIdx, 1);
             activeLayout.splice(dstIdx, 0, movedItem);
@@ -1201,12 +1548,10 @@
           return;
         }
 
-        // Prevent audio from playing if we just closed the menu
         if (isMenuRecent || longPressed) return;
 
         flashButton(card);
         
-        // Toggle Stop logic for this individual track
         if (activeTracks.has(card)) {
           stopTrackWithFade(card);
           return;
@@ -1215,7 +1560,6 @@
         onClick(card);
       });
 
-      // Bind Desktop Drag Events (only works if draggable=true)
       card.addEventListener('dragstart', handleDragStart);
       card.addEventListener('dragenter', handleDragEnter);
       card.addEventListener('dragover',  handleDragOver);
@@ -1255,73 +1599,82 @@
           }
           grid.appendChild(card);
         }
-        return;
-      }
+      } else {
+        grid.classList.remove("playlist-grid");
+        for(const item of songsLayout){
+          let topText, bottomText, songSrc, goalSrc, label, isMissing = false;
 
-      grid.classList.remove("playlist-grid");
-      for(const item of songsLayout){
-        let topText, bottomText, songSrc, goalSrc, label, isMissing = false;
-
-        if (item._type === 'player') {
-          songSrc = `${AUDIO_BASE}/songs/${item.songFile}`;
-          goalSrc = `${AUDIO_BASE}/goals/${item.goalFile}`;
-          label = `#${item.num} ${item.name}`;
-          isMissing = MISSING_SONG_NUMS.has(item.num);
-          topText = isMissing ? `-${item.num}-` : String(item.num);
-          bottomText = item.name;
-        } else {
-          songSrc = `${AUDIO_BASE}/songs/${item.songFile}`;
-          goalSrc = `${AUDIO_BASE}/goals/${item.goalFile}`;
-          label = item.labelBottom ? `${item.labelBottom}` : item.labelTop;
-          topText = item.labelTop;
-          bottomText = item.labelBottom || "";
-        }
-
-        const card = makeCard({
-          top: topText,
-          bottom: bottomText,
-          isMissing,
-          dragId: item._dragId,
-          onClick: (el) => {
-            if(currentMode === Mode.SONGS){
-              playAudio(songSrc, label, el);
-            } else {
-              // DIRECT GOAL PLAYBACK - No confirmation step
-              playAudio(goalSrc, `GOAL: ${label}`, el);
-            }
+          if (item._type === 'player') {
+            songSrc = `${AUDIO_BASE}/songs/${item.songFile}`;
+            goalSrc = `${AUDIO_BASE}/goals/${item.goalFile}`;
+            label = `#${item.num} ${item.name}`;
+            isMissing = missingSongsSet.has(item.num);
+            topText = isMissing ? `-${item.num}-` : String(item.num);
+            bottomText = item.name;
+          } else {
+            songSrc = `${AUDIO_BASE}/songs/${item.songFile}`;
+            goalSrc = `${AUDIO_BASE}/goals/${item.goalFile}`;
+            label = item.labelBottom ? `${item.labelBottom}` : item.labelTop;
+            topText = item.labelTop;
+            bottomText = item.labelBottom || "";
           }
-        });
 
-        grid.appendChild(card);
+          const card = makeCard({
+            top: topText,
+            bottom: bottomText,
+            isMissing,
+            dragId: item._dragId,
+            onClick: (el) => {
+              if(currentMode === Mode.SONGS){
+                playAudio(songSrc, label, el);
+              } else {
+                playAudio(goalSrc, `GOAL: ${label}`, el);
+              }
+            }
+          });
+
+          grid.appendChild(card);
+        }
       }
+
+      // Add the persistent "+" card at the end of the layout
+      const addCard = document.createElement("div");
+      addCard.className = "card add-card";
+      addCard.innerHTML = `<div style="font-size:36px; color:#999; font-weight:100;">+</div>`;
+      addCard.onclick = () => {
+         if (isMoveMode) { setStatus("Cannot move a button here."); return; }
+         window.openEditModal(true);
+      };
+      grid.appendChild(addCard);
     }
 
     // Controls
-    songsTab.addEventListener("click",    () => setMode(Mode.SONGS));
-    goalTab.addEventListener("click",     () => setMode(Mode.GOAL));
-    playlistTab.addEventListener("click", () => setMode(Mode.PLAYLIST));
-    cacheBtn.addEventListener("click",    () => syncOffline());
+    if (songsTab) songsTab.addEventListener("click",    () => setMode(Mode.SONGS));
+    if (goalTab) goalTab.addEventListener("click",     () => setMode(Mode.GOAL));
+    if (playlistTab) playlistTab.addEventListener("click", () => setMode(Mode.PLAYLIST));
+    if (cacheBtn) cacheBtn.addEventListener("click",    () => syncOffline());
 
-    stopBtn.addEventListener("click", () => {
-      const originalText = stopBtn.textContent;
-      stopBtn.classList.add("stopping");
-      stopBtn.textContent = "Stopping…";
-      stopBtn.disabled = true;
-      setStatus("Stopping…");
+    if (stopBtn) {
+      stopBtn.addEventListener("click", () => {
+        const originalText = stopBtn.textContent;
+        stopBtn.classList.add("stopping");
+        stopBtn.textContent = "Stopping…";
+        stopBtn.disabled = true;
+        setStatus("Stopping…");
 
-      stopAllWithFade();
+        stopAllWithFade();
 
-      const ms = Math.ceil(Math.max(0.5, FADE_TOTAL_SEC) * 1000) + 250;
-      setTimeout(() => {
-        stopBtn.classList.remove("stopping");
-        stopBtn.textContent = originalText;
-        stopBtn.disabled = false;
-      }, ms);
-    });
+        const ms = Math.ceil(Math.max(0.5, FADE_TOTAL_SEC) * 1000) + 250;
+        setTimeout(() => {
+          stopBtn.classList.remove("stopping");
+          stopBtn.textContent = originalText;
+          stopBtn.disabled = false;
+        }, ms);
+      });
+    }
 
     // Initial render
     initColorPicker();
-    renderGrid();
     setMode(Mode.SONGS);
   </script>
 </body>
