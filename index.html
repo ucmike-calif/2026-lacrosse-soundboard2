@@ -517,7 +517,7 @@
       <p style="font-size:14px; color:#666; margin-top:-10px;">What would you like to do?</p>
       <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">
         <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('edit')">Edit Button</button>
-        <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('move')">Move Button</button>
+        <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('move')">Swap Button Location</button>
         <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('color')">Change Color</button>
         <button class="ctlbtn" style="background: #ffebee; color: #b30000; font-weight:bold; border-color:#ef9a9a;" onclick="handleActionSelection('delete')">Delete Button</button>
         <button class="ctlbtn" style="background: #fff; color: #555; font-weight:bold; margin-top: 8px;" onclick="closeActionMenu()">Cancel</button>
@@ -891,13 +891,13 @@
 
       if (editingItemType === 'player') {
         const f = getPredictedFileNames(top, bot, 'player');
-        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
       } else if (editingItemType === 'extra') {
         const f = getPredictedFileNames(top, bot, 'extra');
-        box.innerHTML = `Please make sure your audio files are named <strong>${f.song}</strong> and <strong>${f.goal}</strong> and are placed in the /audio/ folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
       } else {
         const f = getPredictedFileNames(top, bot, 'playlist');
-        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the /audio/playlist/ folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the <strong>/audio/playlist/</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
       }
     }
 
