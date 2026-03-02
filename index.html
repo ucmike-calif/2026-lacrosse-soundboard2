@@ -595,7 +595,7 @@
   <div id="errorModalOverlay" class="modal-overlay">
     <div class="modal-content" style="max-width: 450px;">
       <h3 style="margin-top:0; font-size:22px; color: var(--red);">Audio File Not Found</h3>
-      <p id="errorMessageText" style="font-size:15px; color:#333; line-height: 1.5; margin-bottom: 24px; text-align: left;"></p>
+      <div id="errorMessageText" style="font-size:15px; color:#333; line-height: 1.5; margin-bottom: 24px; text-align: left;"></div>
       <button class="ctlbtn go" style="width:100%; padding:12px; font-size:16px; border-radius: 10px;" onclick="document.getElementById('errorModalOverlay').style.display = 'none';">Got it</button>
     </div>
   </div>
@@ -1239,7 +1239,8 @@
               blobUrlCache.set(src, finalSrc);
             }
           } else {
-            fetch(src).then(res => {
+            // Tell fetch to bypass browser cache to ensure it grabs the latest from GH if available
+            fetch(src, { cache: 'no-store' }).then(res => {
               if (res.ok) cache.put(src, res.clone());
             }).catch(() => console.log("Background cache failed"));
           }
@@ -1275,7 +1276,7 @@
         else if (currentMode === Mode.GOAL) folderPath = '/audio/goals/';
         
         // This triggers the new explicit modal you requested!
-        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div><br><span style="font-size:13px; color:#555;"><i>Tip: If you just uploaded it, GitHub takes ~2 minutes to update. Also, ensure your computer didn't accidentally name the file <b>${decodedName}.mp3</b>!</i></span>`;
+        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div><br><span style="font-size:13px; color:#555;"><i>Tip: GitHub is strictly case-sensitive. <b>.MP3</b> is different from <b>.mp3</b>!</i></span><br><br><div style="text-align:center;"><a href="${fullUrl}" target="_blank" style="color: var(--purple); font-weight: bold; text-decoration: underline; font-size: 15px;">Tap here to test the raw link</a><br><span style="font-size:12px; color:#666;">(If this opens a "404 Not Found" page, the file is definitely missing or named incorrectly on GitHub)</span></div>`;
         document.getElementById('errorModalOverlay').style.display = 'flex';
         
         if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
@@ -1359,7 +1360,7 @@
           try {
             const existing = await cache.match(url);
             if (!existing) {
-              const res = await fetch(url);
+              const res = await fetch(url, { cache: 'no-store' });
               if (res.ok) {
                 await cache.put(url, res);
                 loaded++;
