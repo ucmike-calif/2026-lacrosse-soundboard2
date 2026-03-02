@@ -392,6 +392,20 @@
       min-height: 18px;
     }
 
+    /* Lock Icon */
+    .lock-icon {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      font-size: 14px;
+      display: none;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+    .card.locked .lock-icon {
+      display: block;
+    }
+
     /* Modal Overlay Base */
     .modal-overlay {
       display: none;
@@ -517,7 +531,8 @@
       <p style="font-size:14px; color:#666; margin-top:-10px;">What would you like to do?</p>
       <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">
         <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('edit')">Edit Button</button>
-        <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('move')">Swap Button Location</button>
+        <button id="menuMoveBtn" class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('move')">Swap Button Location</button>
+        <button id="menuLockBtn" class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('lock')">Lock Button</button>
         <button class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('color')">Change Color</button>
         <button class="ctlbtn" style="background: #ffebee; color: #b30000; font-weight:bold; border-color:#ef9a9a;" onclick="handleActionSelection('delete')">Delete Button</button>
         <button class="ctlbtn" style="background: #fff; color: #555; font-weight:bold; margin-top: 8px;" onclick="closeActionMenu()">Cancel</button>
@@ -605,6 +620,9 @@
 
     // Default missing items
     const defaultMissingSongs = [2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30];
+    
+    // Default locked items
+    const defaultLockedButtons = [];
 
     const defaultPlayers = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
@@ -680,12 +698,14 @@
     let activeExtras = JSON.parse(localStorage.getItem('lax-extras')) || defaultExtras;
     let activePlaylist = JSON.parse(localStorage.getItem('lax-playlist')) || defaultPlaylist;
     let missingSongsSet = new Set(JSON.parse(localStorage.getItem('lax-missing')) || defaultMissingSongs);
+    let lockedButtonsSet = new Set(JSON.parse(localStorage.getItem('lax-locked')) || defaultLockedButtons);
 
     function saveAllData() {
       localStorage.setItem('lax-players', JSON.stringify(activePlayers));
       localStorage.setItem('lax-extras', JSON.stringify(activeExtras));
       localStorage.setItem('lax-playlist', JSON.stringify(activePlaylist));
       localStorage.setItem('lax-missing', JSON.stringify(Array.from(missingSongsSet)));
+      localStorage.setItem('lax-locked', JSON.stringify(Array.from(lockedButtonsSet)));
     }
 
     let songsLayout = [];
@@ -791,6 +811,14 @@
 
     window.openActionMenu = function(dragId) {
       activeActionId = dragId;
+      
+      const isLocked = lockedButtonsSet.has(dragId);
+      document.getElementById('menuLockBtn').textContent = isLocked ? "Unlock Button" : "Lock Button";
+      
+      const moveBtn = document.getElementById('menuMoveBtn');
+      moveBtn.disabled = isLocked;
+      moveBtn.style.opacity = isLocked ? '0.4' : '1';
+      
       document.getElementById('actionMenuOverlay').style.display = 'flex';
       isMenuRecent = true; 
       setTimeout(() => isMenuRecent = false, 500);
@@ -811,6 +839,14 @@
         renderGrid(); 
       } else if (action === 'edit') {
         window.openEditModal(false, activeActionId);
+      } else if (action === 'lock') {
+        if (lockedButtonsSet.has(activeActionId)) {
+          lockedButtonsSet.delete(activeActionId);
+        } else {
+          lockedButtonsSet.add(activeActionId);
+        }
+        saveAllData();
+        renderGrid();
       } else if (action === 'delete') {
         if (confirm("Are you sure you want to remove this button?")) {
            deleteButton(activeActionId);
@@ -855,6 +891,8 @@
       }
       
       delete cardColors[dragId];
+      lockedButtonsSet.delete(dragId);
+      
       localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
       
       saveAllData();
@@ -1017,11 +1055,17 @@
             missingSongsSet.delete(oldNum);
             if (isMissing) missingSongsSet.add(newNum);
 
-            // Port over color properties to new ID if number changed
-            if (oldNum !== newNum && cardColors[activeActionId]) {
-              cardColors['player_' + newNum] = cardColors[activeActionId];
-              delete cardColors[activeActionId];
-              localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
+            // Port over properties to new ID if number changed
+            if (oldNum !== newNum) {
+              if (cardColors[activeActionId]) {
+                cardColors['player_' + newNum] = cardColors[activeActionId];
+                delete cardColors[activeActionId];
+                localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
+              }
+              if (lockedButtonsSet.has(activeActionId)) {
+                lockedButtonsSet.delete(activeActionId);
+                lockedButtonsSet.add('player_' + newNum);
+              }
             }
           }
         } else if (editingItemType === 'extra') {
@@ -1058,6 +1102,7 @@
     window.showExportCode = function() {
       let code = `// COPY AND PASTE THIS TO REPLACE THE ARRAYS IN YOUR index.html\n\n`;
       code += `const defaultMissingSongs = ${JSON.stringify(Array.from(missingSongsSet))};\n\n`;
+      code += `const defaultLockedButtons = ${JSON.stringify(Array.from(lockedButtonsSet))};\n\n`;
       code += `const defaultPlayers = ${JSON.stringify(activePlayers, null, 2)};\n\n`;
       code += `const defaultExtras = ${JSON.stringify(activeExtras, null, 2)};\n\n`;
       code += `const defaultPlaylist = ${JSON.stringify(activePlaylist, null, 2)};\n`;
@@ -1179,11 +1224,13 @@
       }
 
       let finalSrc = src;
+      let isCached = false;
       try {
         if ('caches' in window) {
           const cache = await caches.open('lax-audio-v1');
           const cachedRes = await cache.match(src);
           if (cachedRes) {
+            isCached = true;
             if (blobUrlCache.has(src)) {
               finalSrc = blobUrlCache.get(src);
             } else {
@@ -1198,6 +1245,12 @@
           }
         }
       } catch(e) { console.warn("Cache API Error:", e); }
+
+      // CACHE BUSTER: Force Safari to bypass any previously cached 404 errors
+      // This ensures that right after you upload a new song to GitHub, it actually checks for it!
+      if (!isCached) {
+        finalSrc = src + "?cb=" + new Date().getTime();
+      }
 
       const audio = new Audio(finalSrc);
       audio.preload = "auto";
@@ -1222,7 +1275,7 @@
         else if (currentMode === Mode.GOAL) folderPath = '/audio/goals/';
         
         // This triggers the new explicit modal you requested!
-        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div>`;
+        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div><br><span style="font-size:13px; color:#555;"><i>Tip: If you just uploaded it, GitHub takes ~2 minutes to update. Also, ensure your computer didn't accidentally name the file <b>${decodedName}.mp3</b>!</i></span>`;
         document.getElementById('errorModalOverlay').style.display = 'flex';
         
         if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
@@ -1381,7 +1434,8 @@
     }
 
     function handleDragEnter(e) {
-      if (this !== dragSrcEl && !this.classList.contains('add-card')) {
+      // Do not allow dragging over add card or locked cards
+      if (this !== dragSrcEl && !this.classList.contains('add-card') && !this.classList.contains('locked')) {
         this.classList.add('over');
       }
     }
@@ -1394,29 +1448,29 @@
       if (e.stopPropagation) {
         e.stopPropagation();
       }
-      if (this.classList.contains('add-card')) return false; // Can't drop on the add button
+      // Prevent dropping on Add card or Locked cards
+      if (this.classList.contains('add-card') || this.classList.contains('locked')) return false; 
       
       if (dragSrcEl !== this) {
-        const gridNodes = Array.from(grid.children);
-        const srcIndex = gridNodes.indexOf(dragSrcEl);
-        const destIndex = gridNodes.indexOf(this);
-
-        if (srcIndex < destIndex) {
-          this.parentNode.insertBefore(dragSrcEl, this.nextSibling);
-        } else {
-          this.parentNode.insertBefore(dragSrcEl, this);
-        }
-
+        const srcDragId = dragSrcEl.dataset.dragId;
+        const destDragId = this.dataset.dragId;
+        
         const activeLayout = currentMode === Mode.PLAYLIST ? playlistLayout : songsLayout;
         const storageKey = currentMode === Mode.PLAYLIST ? 'lax-playlist-layout' : 'lax-songs-layout';
-        
-        // Exclude the Add card when saving order
-        const newOrder = Array.from(grid.children)
-                              .filter(c => !c.classList.contains('add-card'))
-                              .map(c => c.dataset.dragId);
-        
-        activeLayout.sort((a, b) => newOrder.indexOf(a._dragId) - newOrder.indexOf(b._dragId));
-        localStorage.setItem(storageKey, JSON.stringify(newOrder));
+
+        const srcIdx = activeLayout.findIndex(x => x._dragId === srcDragId);
+        const dstIdx = activeLayout.findIndex(x => x._dragId === destDragId);
+
+        if (srcIdx !== -1 && dstIdx !== -1) {
+          // Perform an exact Array Swap to guarantee locked buttons between them do not shift indices
+          const temp = activeLayout[srcIdx];
+          activeLayout[srcIdx] = activeLayout[dstIdx];
+          activeLayout[dstIdx] = temp;
+          
+          const newOrder = activeLayout.map(c => c._dragId);
+          localStorage.setItem(storageKey, JSON.stringify(newOrder));
+          renderGrid(); // Redraws with new swapped order
+        }
       }
       return false;
     }
@@ -1432,8 +1486,15 @@
       card.className = "card";
       card.dataset.dragId = dragId;
       
-      if (!isMoveMode) {
+      const isLocked = lockedButtonsSet.has(dragId);
+
+      // Only allow desktop dragging if not in tap-to-move mode AND button is not locked
+      if (!isMoveMode && !isLocked) {
         card.setAttribute('draggable', 'true'); 
+      }
+
+      if (isLocked) {
+        card.classList.add('locked');
       }
 
       if (isMoveMode) {
@@ -1474,6 +1535,11 @@
         </div>
       `;
       card.appendChild(playOverlay);
+      
+      const lockIcon = document.createElement("div");
+      lockIcon.className = "lock-icon";
+      lockIcon.textContent = "🔒";
+      card.appendChild(lockIcon);
 
       if (activeTracks.has(card)) {
           card.classList.add("playing");
@@ -1549,7 +1615,13 @@
              renderGrid();
              return;
           }
+
+          if (isLocked) {
+             setStatus("Cannot swap with a locked button.");
+             return;
+          }
           
+          // Tap-to-Swap Logic! 
           const activeLayout = currentMode === Mode.PLAYLIST ? playlistLayout : songsLayout;
           const storageKey = currentMode === Mode.PLAYLIST ? 'lax-playlist-layout' : 'lax-songs-layout';
 
@@ -1557,8 +1629,10 @@
           const dstIdx = activeLayout.findIndex(x => x._dragId === dragId);
 
           if (srcIdx !== -1 && dstIdx !== -1) {
-            const [movedItem] = activeLayout.splice(srcIdx, 1);
-            activeLayout.splice(dstIdx, 0, movedItem);
+            // Perform an exact Array Swap to guarantee locked buttons between them do not shift indices
+            const temp = activeLayout[srcIdx];
+            activeLayout[srcIdx] = activeLayout[dstIdx];
+            activeLayout[dstIdx] = temp;
             
             const newOrder = activeLayout.map(c => c._dragId);
             localStorage.setItem(storageKey, JSON.stringify(newOrder));
