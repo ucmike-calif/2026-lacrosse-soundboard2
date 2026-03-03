@@ -1356,6 +1356,12 @@
                 lockedButtonsSet.delete(activeActionId);
                 lockedButtonsSet.add('player_' + newNum);
               }
+              
+              // CRITICAL FIX: Keep the button in its exact position by replacing its ID in the layout array
+              const layoutIdx = songsLayoutOrder.indexOf(activeActionId);
+              if (layoutIdx > -1) {
+                  songsLayoutOrder[layoutIdx] = 'player_' + newNum;
+              }
             }
           }
         } else if (editingItemType === 'extra') {
@@ -1392,6 +1398,12 @@
                    if (lockedButtonsSet.has(activeActionId)) {
                      lockedButtonsSet.delete(activeActionId);
                      lockedButtonsSet.add(newDragId);
+                   }
+                   
+                   // CRITICAL FIX: Keep the button in its exact position by replacing its ID in the layout array
+                   const layoutIdx = playlistLayoutOrder.indexOf(activeActionId);
+                   if (layoutIdx > -1) {
+                       playlistLayoutOrder[layoutIdx] = newDragId;
                    }
                 }
              }
