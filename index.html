@@ -1,671 +1,1976 @@
-import streamlit as st
-import pandas as pd
-
-import gspread
-from google.oauth2.service_account import Credentials
-
-import io
-import os
-from datetime import datetime, timezone
-
-from pptx import Presentation
-
-# -----------------------
-# Config / Constants
-# -----------------------
-APP_VERSION = "SLEI-v2.0-pilot"
-
-TEMPLATE_PATH = "SLEI_Dashboard_TEMPLATE.pptx"  # keep in repo root
-
-ITEMS = [
-    (1, "Pause long enough to respond thoughtfully in high-pressure situations", "Sight"),
-    (2, "Take deliberate actions to influence long-term outcomes", "Sight"),
-    (3, "Test your assumptions before responding to a situation", "Sight"),
-    (4, "Recognize predictable patterns in your reactions and adjust your response accordingly", "Sight"),
-    (5, "Align major commitments with what you identify as most important in your role", "Tenacity"),
-    (6, "Adjust workload or boundaries to sustain performance", "Tenacity"),
-    (7, "Remove or delegate commitments that do not require your direct involvement", "Tenacity"),
-    (8, "Intentionally focus your time on the highest-level responsibilities your role is designed to perform", "Tenacity"),
-    (9, "Take timely, considered action on important issues even when outcomes are uncertain", "Ability"),
-    (10, "When challenges arise, focus first on actions within your control", "Ability"),
-    (11, "Renegotiate commitments before they become risks", "Ability"),
-    (12, "Intentionally develop others’ capability so they can operate with greater ownership and independence", "Ability"),
-    (13, "Before launching work, ensure clarity about outcomes, ownership, resources, and how the team will operate", "Results"),
-    (14, "Hold check-ins to ensure expectations remain clear", "Results"),
-    (15, "Delegate work with clear expectations rather than retaining it", "Results"),
-    (16, "Effectively influence stakeholders beyond your formal authority to move important work forward", "Results"),
-]
-
-DOMAINS = {
-    "Sight": [1, 2, 3, 4],
-    "Tenacity": [5, 6, 7, 8],
-    "Ability": [9, 10, 11, 12],
-    "Results": [13, 14, 15, 16],
-}
-
-FREQ_OPTIONS = ["Rarely", "Occasionally", "Sometimes", "Often", "Consistently", "Not applicable to my role"]
-CHANGE_OPTIONS = ["Much less often", "Slightly less often", "About the same", "Slightly more often", "Much more often"]
-
-FREQ_MAP = {
-    "Rarely": 1,
-    "Occasionally": 2,
-    "Sometimes": 3,
-    "Often": 4,
-    "Consistently": 5,
-    "Not applicable to my role": None,
-}
-CHANGE_MAP = {
-    "Much less often": -2,
-    "Slightly less often": -1,
-    "About the same": 0,
-    "Slightly more often": 1,
-    "Much more often": 2,
-}
-
-
-# -----------------------
-# Helpers
-# -----------------------
-
-def safe_mean(vals):
-    vals = [v for v in vals if isinstance(v, (int, float))]
-    return sum(vals) / len(vals) if vals else None
-
-
-def round1(x):
-    return None if x is None else round(x, 1)
-
-
-def overall_descriptor(score):
-    if score is None:
-        return "Not scored"
-    if score >= 4.5:
-        return "Consistently / Automatic"
-    if score >= 4.0:
-        return "Often"
-    if score >= 3.0:
-        return "Sometimes"
-    if score >= 2.0:
-        return "Inconsistent"
-    return "Rarely"
-
-
-def open_sheet():
-    creds_info = st.secrets["gcp_service_account"]
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-    gc = gspread.authorize(creds)
-    return gc.open(st.secrets["sheet_name"]).worksheet(st.secrets["worksheet_name"])
-
-
-def append_row_to_sheet(ws, row):
-    ws.append_row(row, value_input_option="RAW")
-
-
-def init_state():
-    st.session_state.setdefault("step", 1)
-
-    # Context
-    st.session_state.setdefault("role_anchor", None)
-    st.session_state.setdefault("role_anchor_other", "")
-    st.session_state.setdefault("profession", None)
-    st.session_state.setdefault("profession_other", "")
-    st.session_state.setdefault("years", None)
-    st.session_state.setdefault("scope", None)
-    st.session_state.setdefault("scope_other", "")
-
-    # Per-item answers
-    st.session_state.setdefault("freq_sel", {qid: None for qid, _, _ in ITEMS})
-    st.session_state.setdefault("chg_sel", {qid: None for qid, _, _ in ITEMS})
-
-    # Feedback / contact
-    st.session_state.setdefault("improve_feedback", "")
-    st.session_state.setdefault("testimonial", "")
-
-    # Dashboard
-    st.session_state.setdefault("dashboard_generated", False)
-    st.session_state.setdefault("dashboard_filename", "")
-    st.session_state.setdefault("dashboard_bytes", None)
-    st.session_state.setdefault("row_written", False)
-
-
-def reset_all():
-    # Keep Streamlit happy: clear only our keys
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
-    init_state()
-
-
-def go_next():
-    st.session_state.step += 1
-
-
-def go_prev():
-    st.session_state.step -= 1
-
-
-def compute_scores():
-    freq_num = {qid: FREQ_MAP.get(st.session_state.freq_sel.get(qid)) for qid, _, _ in ITEMS}
-    chg_num = {qid: CHANGE_MAP.get(st.session_state.chg_sel.get(qid)) for qid, _, _ in ITEMS}
-
-    # Overall
-    freq_vals = [v for v in freq_num.values() if isinstance(v, (int, float))]
-    overall = round1(safe_mean(freq_vals))
-    overall_desc = overall_descriptor(overall)
-
-    # Domain scores
-    dom_scores = {}
-    for dom, ids in DOMAINS.items():
-        dom_scores[dom] = round1(safe_mean([freq_num.get(i) for i in ids]))
-
-    # Change stats (only for non-NA items)
-    chg_vals = [
-        chg_num[qid]
-        for qid, _, _ in ITEMS
-        if freq_num.get(qid) is not None and isinstance(chg_num.get(qid), (int, float))
-    ]
-    avg_change = safe_mean(chg_vals)
-
-    # Growth count (positive change)
-    pos_count = sum(
-        1
-        for qid, _, _ in ITEMS
-        if freq_num.get(qid) is not None and isinstance(chg_num.get(qid), (int, float)) and chg_num[qid] > 0
-    )
-
-    return freq_num, chg_num, overall, overall_desc, dom_scores, avg_change, pos_count
-
-
-def required_missing_step1():
-    missing = []
-
-    ra = st.session_state.role_anchor
-    if not ra:
-        missing.append("Leadership role")
-    elif ra == "Other" and not st.session_state.role_anchor_other.strip():
-        missing.append("Leadership role (Other)")
-
-    prof = st.session_state.profession
-    if not prof:
-        missing.append("Profession type")
-    elif prof == "Other" and not st.session_state.profession_other.strip():
-        missing.append("Profession type (Other)")
-
-    if not st.session_state.years:
-        missing.append("Years of experience")
-
-    sc = st.session_state.scope
-    if not sc:
-        missing.append("Leadership scope")
-    elif sc == "Other" and not st.session_state.scope_other.strip():
-        missing.append("Leadership scope (Other)")
-
-    return missing
-
-
-def required_missing_freq():
-    return [qid for qid, _, _ in ITEMS if not st.session_state.freq_sel.get(qid)]
-
-
-def required_missing_change(non_na_ids):
-    return [qid for qid in non_na_ids if not st.session_state.chg_sel.get(qid)]
-
-
-# -----------------------
-# PPTX Dashboard generation
-# -----------------------
-
-def _replace_tokens_in_shape(shape, token_map: dict[str, str]) -> None:
-    # Text frames
-    if hasattr(shape, "text_frame") and shape.has_text_frame:
-        tf = shape.text_frame
-        for p in tf.paragraphs:
-            for run in p.runs:
-                if not run.text:
-                    continue
-                for k, v in token_map.items():
-                    run.text = run.text.replace(f"{{{{{k}}}}}", v)
-
-    # Groups
-    if hasattr(shape, "shapes"):
-        for s in shape.shapes:
-            _replace_tokens_in_shape(s, token_map)
-
-
-def build_dashboard_bytes(token_map: dict[str, str], template_path: str = TEMPLATE_PATH) -> bytes:
-    if not os.path.exists(template_path):
-        raise FileNotFoundError(
-            f"Template not found at '{template_path}'. Upload it to the repo root (same folder as app.py)."
-        )
-
-    prs = Presentation(template_path)
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            _replace_tokens_in_shape(shape, token_map)
-
-    buf = io.BytesIO()
-    prs.save(buf)
-    return buf.getvalue()
-
-
-def build_token_map():
-    freq_num, chg_num, overall, overall_desc, dom_scores, avg_change, pos_count = compute_scores()
-
-    # Strongest growth = top 2 positive change items (by change score, then by lower current freq as tiebreak)
-    non_na = [qid for qid in range(1, 17) if freq_num.get(qid) is not None]
-
-    growth_rank = []
-    for qid in non_na:
-        c = chg_num.get(qid)
-        f = freq_num.get(qid)
-        if isinstance(c, (int, float)):
-            growth_rank.append((c, -(f or 0), qid))
-    growth_rank.sort(reverse=True)
-
-    top_growth_qids = [qid for c, _, qid in growth_rank if isinstance(c, (int, float)) and c > 0][:2]
-
-    # Opportunities = bottom 2 current frequency items (non-NA)
-    opp_rank = []
-    for qid in non_na:
-        f = freq_num.get(qid)
-        if isinstance(f, (int, float)):
-            opp_rank.append((f, qid))
-    opp_rank.sort()  # low to high
-    opp_qids = [qid for _, qid in opp_rank[:2]]
-
-    def qline(qid: int) -> str:
-        text = dict((i, t) for i, t, _ in ITEMS)[qid]
-        return f"Q{qid}: {text}"
-
-    # Strings
-    consistency_score = "" if overall is None else f"{overall:.1f} / 5"
-    consistency_band = overall_desc
-
-    growth_avg_str = "" if avg_change is None else f"{avg_change:+.1f} avg"
-    growth_summary = f"Increased in {pos_count} of 16 behaviors" if non_na else "No scored items"
-
-    # Domain numbers
-    sight = "" if dom_scores.get("Sight") is None else f"{dom_scores['Sight']:.1f}"
-    tenacity = "" if dom_scores.get("Tenacity") is None else f"{dom_scores['Tenacity']:.1f}"
-    ability = "" if dom_scores.get("Ability") is None else f"{dom_scores['Ability']:.1f}"
-    results = "" if dom_scores.get("Results") is None else f"{dom_scores['Results']:.1f}"
-
-    # These token names are intentionally broad; any that exist in the template will be replaced.
-    token_map = {
-        # Header / intro
-        "DASHBOARD_TITLE": "SLEI Participant Dashboard",
-        "DASHBOARD_SUBTITLE": "STAR Leadership Effectiveness Index • Version 2.0 Pilot",
-        "DASHBOARD_INTRO": (
-            "This dashboard is not a grade. It summarizes your self-reported consistency in applying key leadership behaviors "
-            "and how that application has changed compared to before the course."
-        ),
-
-        # KPIs
-        "CONSISTENCY_SCORE": consistency_score,
-        "CONSISTENCY_BAND": consistency_band,
-        "GROWTH_AVG": growth_avg_str,
-        "GROWTH_SUMMARY": growth_summary,
-
-        # Domain profile
-        "SIGHT_SCORE": sight,
-        "TENACITY_SCORE": tenacity,
-        "ABILITY_SCORE": ability,
-        "RESULTS_SCORE": results,
-
-        # Strongest reported growth
-        "STRONGEST_GROWTH_1": qline(top_growth_qids[0]) if len(top_growth_qids) >= 1 else "",
-        "STRONGEST_GROWTH_2": qline(top_growth_qids[1]) if len(top_growth_qids) >= 2 else "",
-
-        # Opportunities
-        "OPPORTUNITY_1": qline(opp_qids[0]) if len(opp_qids) >= 1 else "",
-        "OPPORTUNITY_2": qline(opp_qids[1]) if len(opp_qids) >= 2 else "",
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  
+  <!-- Apple Web App / PWA Meta Tags for full-screen iPad experience -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Lax Board" />
+  
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <title>Lacrosse Soundboard</title>
+  <style>
+    :root{
+      --bg: #ffffff;
+      --text: #111;
+      --muted: #555;
+      --border: #d9d9d9;
+
+      --green: #0b7a30;
+      --greenTint: rgba(11,122,48,0.10);
+
+      --red: #b30000;
+      --redTint: rgba(179,0,0,0.10);
+
+      --purple: #5b2d8e;
+      --purpleTint: rgba(91,45,142,0.10);
+
+      --btnBg: #fff;
+      --btnBorder: #cfcfcf;
+      --btnShadow: rgba(0,0,0,0.08);
     }
 
-    # Optional explanation tokens (only if your template includes them)
-    token_map["GROWTH_INTERPRETATION"] = (
-        "Average change reflects how often you report applying these behaviors now compared to before the course, on a -2 to +2 scale."
-        if avg_change is not None
-        else ""
-    )
+    body{
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      /* Prevent text selection and bouncing on iPad */
+      -webkit-user-select: none;
+      user-select: none;
+      overscroll-behavior-y: none;
+    }
 
-    token_map["CONSISTENCY_INTERPRETATION"] = (
-        f"Overall: {overall:.1f}/5 ({overall_desc}) — a snapshot of how consistently these behaviors show up in your day-to-day application."
-        if overall is not None
-        else "Overall: Not scored."
-    )
+    header{
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      /* Add safe-area padding for modern iPads/iPhones */
+      padding-top: max(14px, env(safe-area-inset-top));
+    }
 
-    return token_map
+    h1{
+      margin: 0 0 10px 0;
+      font-size: 26px;
+      line-height: 1.1;
+      user-select: none;
+    }
+
+    .banner{
+      width: 100%;
+      border-radius: 10px;
+      padding: 14px 16px;
+      font-weight: 800;
+      text-align: center;
+      letter-spacing: 1px;
+      font-size: 20px;
+      color: #fff;
+      user-select: none;
+    }
+    .banner.song{ background: var(--green); }
+    .banner.goal{ background: var(--red); }
+    .banner.playlist{ background: var(--purple); }
+
+    .tabbtn .playlistText{ color: var(--purple); font-weight: 800; }
+
+    .toolbar{
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tabbtn, .ctlbtn{
+      border: 1px solid var(--btnBorder);
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 16px;
+      cursor: pointer;
+      user-select: none;
+      box-shadow: 0 2px 8px var(--btnShadow);
+    }
+
+    .ctlbtn:disabled{
+      opacity: 0.85;
+      cursor: default;
+    }
+
+    /* Stop button should look like a stop sign */
+    #stopBtn{
+      background: var(--red);
+      color: #fff;
+      border-color: rgba(0,0,0,0.10);
+      font-weight: 800;
+    }
+
+    /* Visual feedback when Stop has been clicked */
+    #stopBtn.stopping{
+      background: #7f0000;
+      border-color: rgba(0,0,0,0.20);
+      outline: 2px solid rgba(0,0,0,0.20);
+    }
+    
+    #cacheBtn, #exportBtn {
+      font-weight: 600;
+      color: #333;
+    }
+
+    .tabbtn.active{
+      outline: 2px solid rgba(0,0,0,0.06);
+    }
+
+    .tabbtn .songsText{ color: var(--green); font-weight: 800; }
+    .tabbtn .goalText{ color: var(--red); font-weight: 800; }
+
+    .status{
+      padding: 10px 16px 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.3;
+      min-height: 22px;
+    }
+
+    .gridwrap{
+      padding: 12px 16px 16px;
+      /* Add safe padding for bottom of iPad screens */
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+    }
+    .grid{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(6, minmax(130px, 1fr));
+    }
+
+    @media (max-width: 1100px){
+      .grid{ grid-template-columns: repeat(4, minmax(140px, 1fr)); }
+    }
+    @media (max-width: 750px){
+      .grid{ grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+    }
+    @media (max-width: 520px){
+      .grid{ grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+    }
+
+    /* Playlist-specific grid: more columns, tighter */
+    @media (max-width: 750px){
+      .grid.playlist-grid{ grid-template-columns: repeat(4, 1fr); }
+    }
+    @media (max-width: 520px){
+      .grid.playlist-grid{ grid-template-columns: repeat(3, 1fr); }
+    }
+
+    .card{
+      border: 1px solid var(--btnBorder);
+      border-radius: 14px;
+      background: var(--btnBg);
+      box-shadow: 0 6px 14px var(--btnShadow);
+      padding: 10px;
+      user-select: none;
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.05s ease, background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+      
+      /* Enhance touch dragging */
+      touch-action: manipulation;
+      -webkit-touch-callout: none;
+      -webkit-user-drag: element;
+    }
+
+    /* Add Card Special Styling */
+    .card.add-card {
+      border: 2px dashed #999;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: none;
+      opacity: 0.6;
+      min-height: 80px;
+    }
+    .card.add-card:active {
+      opacity: 1;
+      background: rgba(0,0,0,0.05);
+      transform: scale(0.98);
+    }
+    
+    /* Spacer Card Special Styling */
+    .card.spacer-card {
+      background: rgba(0,0,0,0.02);
+      border: 2px dashed var(--border);
+      box-shadow: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 80px;
+    }
+    .card.spacer-card::after {
+      content: "Empty Space";
+      font-size: 13px;
+      font-weight: 600;
+      color: #999;
+      text-transform: uppercase;
+    }
+    .playlist-grid .card.spacer-card {
+      min-height: 110px;
+    }
+
+    /* Ensures drag events properly trigger on the main card container */
+    .card > * {
+      pointer-events: none;
+    }
+
+    /* Drag and Drop visual feedback */
+    .card.dragging {
+      opacity: 0.4;
+      transform: scale(0.95);
+    }
+    .card.over {
+      transform: scale(1.03);
+      outline: 3px dashed var(--active-theme);
+      outline-offset: -3px;
+      opacity: 0.8;
+    }
+
+    /* Move Mode Styles */
+    .card.moving-source {
+      transform: scale(1.05);
+      border-color: var(--active-theme) !important;
+      box-shadow: 0 0 0 4px var(--active-theme), 0 10px 24px rgba(0,0,0,0.18) !important;
+      z-index: 5;
+      animation: pulse-border 1.5s infinite;
+    }
+    @keyframes pulse-border {
+      0% { opacity: 1; }
+      50% { opacity: 0.6; }
+      100% { opacity: 1; }
+    }
+    .card.moving-target {
+      outline: 3px dashed var(--active-theme);
+      outline-offset: 4px;
+    }
+    .card.moving-target:active {
+      background: var(--active-theme);
+      opacity: 0.3;
+    }
+
+    /* Playlist-specific grid: 6 columns, tight gaps */
+    .grid.playlist-grid{
+      gap: 6px;
+      grid-template-columns: repeat(6, 1fr);
+    }
+
+    /* Playlist cards */
+    .playlist-grid .card:not(.spacer-card):not(.add-card){
+      border-radius: 8px !important;
+      padding: 6px !important;
+      box-shadow: 0 2px 5px var(--btnShadow) !important;
+      height: 110px !important;
+      box-sizing: border-box !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: center !important;
+      overflow: hidden !important;
+    }
+    .playlist-grid .num{
+      font-size: 17px !important;
+      font-weight: 800 !important;
+      padding: 8px 6px !important;
+      border: 1px solid var(--btnBorder) !important;
+      background: rgba(255,255,255,0.9) !important;
+      border-radius: 7px !important;
+      line-height: 1.25 !important;
+      display: -webkit-box !important;
+      -webkit-line-clamp: 2 !important;
+      -webkit-box-orient: vertical !important;
+      overflow: hidden !important;
+    }
+    .playlist-grid .name{
+      font-size: 11px !important;
+      font-weight: 400 !important;
+      margin-top: 4px !important;
+      min-height: 0 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      color: #555 !important;
+    }
+
+    /* Card Mode Themes */
+    .card.songModeTint{ 
+      background: var(--greenTint); 
+      --active-theme: var(--green);
+    }
+    .card.playlistModeTint{ 
+      background: var(--purpleTint); 
+      --active-theme: var(--purple);
+    }
+    .card.goalModeTint{ 
+      background: var(--redTint); 
+      --active-theme: var(--red);
+    }
+
+    /* Custom Color Overrides */
+    .card.has-custom-color {
+      background: var(--custom-bg) !important;
+      border-color: var(--custom-border) !important;
+    }
+    .card.has-custom-color.playing {
+      border-color: var(--active-theme) !important;
+    }
+
+    .card.missing{
+      opacity: 0.5; /* Increased opacity for better readability */
+      filter: grayscale(1);
+    }
+    .card.missing .num{
+      color: #444; /* Darkened text color */
+      border-style: dashed;
+      background: rgba(235,235,235,0.95);
+    }
+    .card.missing .name{
+      color: #444; /* Darkened text color */
+      font-weight: 500;
+    }
+
+    /* Admin Mode Classes */
+    .admin-only { display: none !important; }
+    body.admin-mode .admin-only { display: inline-block !important; }
+    body.admin-mode .card.add-card.admin-only { display: flex !important; }
+    body.admin-mode .admin-hide { display: none !important; }
+
+    .card:not(.add-card):not(.spacer-card):active{ transform: scale(0.985); }
+    .card.spacer-card:active{ transform: scale(0.985); }
+
+    .card.flash{ outline: 3px solid rgba(0,0,0,0.14); }
+
+    /* Active Playback State Elements */
+    .card.playing{
+      border-color: var(--active-theme);
+      transform: scale(1.02);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.18);
+      z-index: 2; /* Pop over neighboring cards */
+    }
+    
+    .play-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255, 255, 255, 0.75); /* Frosted glass effect */
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      border-radius: inherit;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .card.playing .play-overlay {
+      display: flex;
+    }
+
+    .progress-ring {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      /* Fills based on the --progress variable updated by JS */
+      background: conic-gradient(var(--active-theme) var(--progress, 0%), #374151 0%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+    }
+
+    .progress-ring-inner {
+      width: 44px;
+      height: 44px;
+      background: #111827; /* Dark background matching the uploaded icon */
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .pause-bar {
+      width: 6px;
+      height: 18px;
+      background: var(--active-theme);
+      border-radius: 2px;
+    }
+
+    .num{
+      font-size: 22px;
+      font-weight: 900;
+      text-align: center;
+      padding: 12px 8px;
+      border-radius: 10px;
+      border: 1px solid var(--btnBorder);
+      background: rgba(255,255,255,0.8);
+    }
+
+    .name{
+      margin-top: 8px;
+      text-align: center;
+      font-size: 14px;
+      color: #222;
+      min-height: 18px;
+    }
+
+    /* Lock Icon */
+    .lock-icon {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      font-size: 14px;
+      display: none;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+    .card.locked .lock-icon {
+      display: block;
+    }
+
+    /* Modal Overlay Base */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    .modal-content {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      width: 90%;
+      max-width: 320px;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+
+    /* Edit/Add Modal specific styles */
+    .edit-input-group {
+      margin-bottom: 12px;
+      text-align: left;
+    }
+    .edit-input-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 4px;
+      color: #333;
+    }
+    .edit-input-group input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    .edit-checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      text-align: left;
+      margin-bottom: 16px;
+      color: #333;
+      font-weight: bold;
+    }
+    .edit-instructions {
+      background: #f8f9fa;
+      padding: 12px;
+      font-size: 13px;
+      color: #444;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      text-align: left;
+      line-height: 1.4;
+      border: 1px dashed #ccc;
+    }
+
+    /* Custom Color Picker Menu */
+    .color-swatch-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin: 20px 0;
+    }
+    .color-swatch {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 3px solid transparent;
+      transition: transform 0.1s;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+    }
+    .color-swatch:active {
+      transform: scale(0.9);
+    }
+    .color-swatch.default-swatch {
+      background: #f8f9fa;
+      border: 2px dashed #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: #999;
+      line-height: 1;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1 id="mainTitle">Lacrosse Soundboard</h1>
+    <div id="modeBanner" class="banner song">SONG MODE</div>
+  </header>
+
+  <div class="toolbar">
+    <button id="songsTab" class="tabbtn active" type="button"><span class="songsText">Songs</span></button>
+    <button id="goalTab" class="tabbtn" type="button"><span class="goalText">Goal Call</span></button>
+    <button id="playlistTab" class="tabbtn" type="button"><span class="playlistText">Playlist</span></button>
+    <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
+    <button id="cacheBtn" class="ctlbtn" type="button" title="Download all audio to device for offline use">Offline Sync</button>
+    
+    <button id="editBoardBtn" class="ctlbtn admin-hide" type="button" style="font-weight: bold; color: var(--purple);">Edit</button>
+    
+    <button id="exportBtn" class="ctlbtn admin-only" type="button" onclick="showExportCode()">Export Code</button>
+    <button id="lockAdminBtn" class="ctlbtn admin-only" type="button" style="background: var(--purple); color: white; border-color: rgba(0,0,0,0.1);">Lock</button>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <div class="gridwrap">
+    <div id="grid" class="grid"></div>
+  </div>
+
+  <!-- Action Menu Modal -->
+  <div id="actionMenuOverlay" class="modal-overlay">
+    <div class="modal-content">
+      <h3 style="margin-top:0; font-size:20px;">Button Options</h3>
+      <p style="font-size:14px; color:#666; margin-top:-10px;">What would you like to do?</p>
+      <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 16px;">
+        <button id="menuEditBtn" class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('edit')">Edit Button</button>
+        <button id="menuMoveBtn" class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('move')">Swap Button Location</button>
+        <button id="menuLockBtn" class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('lock')">Lock Button</button>
+        <button id="menuColorBtn" class="ctlbtn" style="background: #f0f0f0; color: #111; font-weight:bold; border-color:#ccc;" onclick="handleActionSelection('color')">Change Color</button>
+        <button id="menuDeleteBtn" class="ctlbtn" style="background: #ffebee; color: #b30000; font-weight:bold; border-color:#ef9a9a;" onclick="handleActionSelection('delete')">Delete Button (Leaves Blank Space)</button>
+        <button class="ctlbtn" style="background: #fff; color: #555; font-weight:bold; margin-top: 8px;" onclick="closeActionMenu()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add/Edit Modal -->
+  <div id="editModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 400px;">
+      <h3 id="editModalTitle" style="margin-top:0; font-size:20px;">Edit Button</h3>
+      
+      <div class="edit-input-group">
+        <label id="editTopLabel">Player Number</label>
+        <input type="text" id="editTopInput" placeholder="e.g. 4" oninput="updateEditInstructions()" />
+      </div>
+      
+      <div class="edit-input-group">
+        <label id="editBottomLabel">Player Name</label>
+        <input type="text" id="editBottomInput" placeholder="e.g. Jane Doe" oninput="updateEditInstructions()" />
+      </div>
+      
+      <div class="edit-checkbox-group">
+        <input type="checkbox" id="editMissingInput" style="transform: scale(1.3); margin-right: 6px;" />
+        <label for="editMissingInput" style="margin:0; cursor:pointer;">No sound file assigned (Gray out button)</label>
+      </div>
+      
+      <div class="edit-instructions" id="editInstructions">
+        <!-- Dynamic instructions appear here -->
+      </div>
+      
+      <div style="display: flex; gap: 10px;">
+        <button class="ctlbtn" style="flex:1;" onclick="closeEditModal()">Cancel</button>
+        <button class="ctlbtn go" style="flex:1; background:var(--green); border-color:var(--green);" onclick="saveEditModal()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Code Modal -->
+  <div id="exportModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 600px; width: 95%;">
+      <h3 style="margin-top:0; font-size:20px;">Export Configuration</h3>
+      <p style="font-size:13px; color:#666; text-align:left; margin-top:-10px;">Copy the code below and replace the variables at the top of your <code>index.html</code> script to make these changes permanent for everyone.</p>
+      <textarea id="exportTextArea" style="width:100%; height:300px; font-family:monospace; font-size:12px; padding:10px; box-sizing:border-box; border: 1px solid #ccc; border-radius: 8px;"></textarea>
+      <button class="ctlbtn go" style="width:100%; margin-top:16px; background:var(--purple); border-color:var(--purple);" onclick="document.getElementById('exportModalOverlay').style.display = 'none';">Close</button>
+    </div>
+  </div>
+
+  <!-- Color Picker Modal -->
+  <div id="colorPickerOverlay" class="modal-overlay">
+    <div class="modal-content">
+      <h3 style="margin-top:0; font-size:20px;">Button Color</h3>
+      <p style="font-size:14px; color:#666; margin-top:-10px;">Pick a color for this button.</p>
+      <div id="swatchContainer" class="color-swatch-grid"></div>
+      <button class="ctlbtn" style="width:100%; padding:12px; font-weight:bold;" onclick="closeColorPicker()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- PIN Unlock Modal -->
+  <div id="pinModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 300px;">
+      <h3 id="pinModalTitle" style="margin-top:0; font-size:20px;">Enter Admin PIN</h3>
+      <p id="pinModalDesc" style="font-size:14px; color:#666; margin-top:-10px;">Enter PIN to unlock editing tools.</p>
+      <input type="password" id="adminPinInput" style="width: 100%; padding: 12px; font-size: 24px; text-align: center; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 20px; box-sizing: border-box; letter-spacing: 5px;" placeholder="••••" />
+      <div style="display: flex; gap: 10px;">
+        <button class="ctlbtn" style="flex:1;" onclick="document.getElementById('pinModalOverlay').style.display='none'">Cancel</button>
+        <button id="pinModalBtn" class="ctlbtn go" style="flex:1; background:var(--purple); border-color:var(--purple);" onclick="checkAdminPin()">Unlock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Missing Audio Error Modal -->
+  <div id="errorModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 450px;">
+      <h3 style="margin-top:0; font-size:22px; color: var(--red);">Audio File Not Found</h3>
+      <div id="errorMessageText" style="font-size:15px; color:#333; line-height: 1.5; margin-bottom: 24px; text-align: left;"></div>
+      <button class="ctlbtn go" style="width:100%; padding:12px; font-size:16px; border-radius: 10px;" onclick="document.getElementById('errorModalOverlay').style.display = 'none';">Got it</button>
+    </div>
+  </div>
+
+  <script>
+    // Try to register an external service worker for caching the HTML page itself.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(e => {
+          console.log("No external Service Worker found. HTML requires initial network to load, but audio uses local Cache API.");
+        });
+      });
+    }
+
+    /*****************************************************************
+     * DEFAULT APP DATA (Replace this section when exporting!)
+     *****************************************************************/
+    const AUDIO_BASE = "audio"; // repo path: /audio/...
+    
+    const FADE_TOTAL_SEC = 4.0; 
+    const FADE_HOLD_SEC  = 1.0; 
+
+    // Default missing items
+    const defaultAdminPinHash = ""; // Empty by default so you can set it!
+    const defaultMissingSongs = [2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30];
+    const defaultLockedButtons = [];
+    const defaultCardColors = {};
+    const defaultSongsLayoutOrder = [];
+    const defaultPlaylistLayoutOrder = [];
+    const defaultSpacersSongs = [];
+    const defaultSpacersPlaylist = [];
+
+    const defaultPlayers = [
+      { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
+      { num: 2,  name: "Hayden Nicholas",             songFile: "02_Hayden_Nicholas.mp3",              goalFile: "02_Hayden_Nicholas_Goal.mp3" },
+      { num: 3,  name: "Corinne Negrete",             songFile: "03_Corinne_Negrete.mp3",              goalFile: "03_Corinne_Negrete_Goal.mp3" },
+      { num: 4,  name: "Ava Thompson",                songFile: "04_Ava_Thompson.mp3",                 goalFile: "04_Ava_Thompson_Goal.mp3" },
+      { num: 5,  name: "Ceili Dwyer",                 songFile: "05_Ceili_Dwyer.mp3",                  goalFile: "05_Ceili_Dwyer_Goal.mp3" },
+      { num: 6,  name: "Ava Ahern",                   songFile: "06_Ava_Ahern.mp3",                    goalFile: "06_Ava_Ahern_Goal.mp3" },
+      { num: 7,  name: "Hazel Toombs",                songFile: "07_Hazel_Toombs.mp3",                 goalFile: "07_Hazel_Toombs_Goal.mp3" },
+      { num: 8,  name: "Beatriz Mark-Constantino",    songFile: "08_Beatriz_Mark-Constantino.mp3",     goalFile: "08_Beatriz_Mark-Constantino_Goal.mp3" },
+      { num: 9,  name: "Sophia Sanchez",              songFile: "09_Sophia_Sanchez.mp3",               goalFile: "09_Sophia_Sanchez_Goal.mp3" },
+      { num: 10, name: "Calyn Foley",                 songFile: "10_Calyn_Foley.mp3",                  goalFile: "10_Calyn_Foley_Goal.mp3" },
+      { num: 11, name: "Marisa Knight",               songFile: "11_Marisa_Knight.mp3",                goalFile: "11_Marisa_Knight_Goal.mp3" },
+      { num: 12, name: "Samina Mcleod",               songFile: "12_Samina_Mcleod.mp3",                goalFile: "12_Samina_Mcleod_Goal.mp3" },
+      { num: 13, name: "Molly Cotton",                songFile: "13_Molly_Cotton.mp3",                 goalFile: "13_Molly_Cotton_Goal.mp3" },
+      { num: 15, name: "Sophia Rizzo",                songFile: "15_Sophia_Rizzo.mp3",                 goalFile: "15_Sophia_Rizzo_Goal.mp3" },
+      { num: 18, name: "Danika Reginato",             songFile: "18_Danika_Reginato.mp3",              goalFile: "18_Danika_Reginato_Goal.mp3" },
+      { num: 20, name: "Ava Keane",                   songFile: "20_Ava_Keane.mp3",                    goalFile: "20_Ava_Keane_Goal.mp3" },
+      { num: 25, name: "Isabella Watson",             songFile: "25_Isabella_Watson.mp3",              goalFile: "25_Isabella_Watson_Goal.mp3" },
+      { num: 27, name: "Amanda Reed",                 songFile: "27_Amanda_Reed.mp3",                  goalFile: "27_Amanda_Reed_Goal.mp3" },
+      { num: 30, name: "Claire Junge",                songFile: "30_Claire_Junge.mp3",                 goalFile: "30_Claire_Junge_Goal.mp3" },
+      { num: 31, name: "Ava Reed",                    songFile: "31_Ava_Reed.mp3",                     goalFile: "31_Ava_Reed_Goal.mp3" },
+    ];
+
+    const defaultExtras = [
+      { key: "Anthem", labelTop: "Anthem", labelBottom: "National Anthem", songFile: "extras/Anthem.mp3", goalFile: "extras/Anthem_Goal.mp3" },
+      { key: "TBD 1", labelTop: "Oh Yeah", labelBottom: "After Nat'l Anthem", songFile: "extras/TBD_1.mp3", goalFile: "extras/TBD_1_Goal.mp3" },
+      { key: "TBD 2", labelTop: "Neigh-Gallop", labelBottom: "Post-Goal", songFile: "extras/TBD_2.mp3", goalFile: "extras/TBD_2_Goal.mp3" },
+      { key: "TBD 3", labelTop: "Mustang Sally", labelBottom: "After a Win", songFile: "extras/TBD_3.mp3", goalFile: "extras/TBD_3_Goal.mp3" },
+    ];
+
+    const defaultPlaylist = [
+      { title: "Hells Bells (Instrumental)",                 artist: "AC/DC",                                    file: "ACDC - Hells Bells (Instrumental).mp3" },
+      { title: "Banana Clipper (Instrumental)",              artist: "Run The Jewels",                           file: "Banana Clipper Instrumental.mp3" },
+      { title: "Sabotage (Instrumental)",                    artist: "Beastie Boys",                             file: "Beastie Boys-Sabotage ( Instrumental ).mp3" },
+      { title: "Bonanza",                                    artist: "",                                         file: "Bonanza.mp3" },
+      { title: "Gonna Make You Sweat",                       artist: "C+C Music Factory",                        file: "C&C MF - Gonna Make You Sweat.mp3" },
+      { title: "Nobody Speak (Instrumental)",                artist: "DJ Shadow",                                file: "DJ Shadow - Nobody Speak (Instrumental).mp3" },
+      { title: "Rocket Fuel ft. De La Soul",                 artist: "DJ Shadow",                                file: "DJ Shadow - Rocket Fuel ft. De La Soul.mp3" },
+      { title: "Right Here, Right Now",                      artist: "Fatboy Slim",                              file: "Fatboy Slim - Right Here, Right Now.mp3" },
+      { title: "Rock And Roll Pt. 2 (Instrumental)",         artist: "Gary Glitter",                             file: "Gary Glitter - Rock And Roll (Pt. 2) (Instrumental Version).mp3" },
+      { title: "The Good, The Bad and The Ugly Theme",       artist: "",                                         file: "Good Bad Ugly Theme.mp3" },
+      { title: "Jump into the Fire (Karaoke)",               artist: "Harry Nilsson",                            file: "Harry Nilsson  - Jump into the Fire (karaoke).mp3" },
+      { title: "Jeopardy Theme Song",                        artist: "",                                         file: "Jeopardy Theme Song.mp3" },
+      { title: "Kill Bill Theme",                            artist: "",                                         file: "Kill Bill Theme.mp3" },
+      { title: "Angel (Instrumental)",                       artist: "Massive Attack",                           file: "Massive Attack - Angel (Instrumental Original).mp3" },
+      { title: "Enter Sandman",                              artist: "Metallica",                                file: "Metallica - Enter Sandman.mp3" },
+      { title: "Misirlou (Pulp Fiction)",                    artist: "Dick Dale",                                file: "Pulp Fiction - Misirlou.mp3" },
+      { title: "It Takes Two",                               artist: "Rob Base & D.J. E-Z Rock",                 file: "Rob Base & D.J. E-Z Rock - It Takes Two.mp3" },
+      { title: "Happy Trails",                               artist: "Roy Rogers",                               file: "Roy Rogers -  Happy trails.mp3" },
+      { title: "Jeopardy (Instrumental)",                    artist: "Run The Jewels",                           file: "RTJ - Jeopardy (Instrumental).mp3" },
+      { title: "Yankee and the Brave (Instrumental)",        artist: "Run The Jewels",                           file: "RTJ - yankee and the brave (ep. 4) (Instrumental).mp3" },
+      { title: "Blockbuster Night Part 1 (Instrumental)",    artist: "Run The Jewels",                           file: "Run The Jewels - Blockbuster Night Part 1 (Instrumental).mp3" },
+      { title: "Call Ticketron (Instrumental)",              artist: "Run The Jewels",                           file: "Run The Jewels - Call Ticketron (Instrumental)  RTJ3.mp3" },
+      { title: "Close Your Eyes (Instrumental)",             artist: "Run The Jewels",                           file: "Run The Jewels - Close Your Eyes (And Count to Fuck) [Instrumental].mp3" },
+      { title: "JU$T (Instrumental)",                        artist: "Run The Jewels ft. Pharrell & Zack de la Rocha", file: "Run The Jewels - JU$T (Instrumental) (feat. Pharrell Williams & Zack de la Rocha).mp3" },
+      { title: "Out of Sight (Instrumental)",                artist: "Run The Jewels ft. 2 Chainz",              file: "Run The Jewels - out of sight (Instrumental) (feat. 2 Chainz).mp3" },
+      { title: "Still D.R.E. (Instrumental)",                artist: "Dr. Dre",                                  file: "Still D.R.E. (Instrumental).mp3" },
+      { title: "Wild Horses",                                artist: "The Sundays",                              file: "Sundays - Wild Horses.mp4" },
+      { title: "Terminator 2 Theme",                         artist: "",                                         file: "Terminator 2 Theme.mp3" },
+      { title: "Hells Bells (Just the Bells)",               artist: "AC/DC",                                    file: "The Bell of Hells Bells (Just the Bells) ACDC Hells Bells bell only.mp3" },
+      { title: "The Dark Knight Main Theme",                 artist: "Hans Zimmer",                              file: "The Dark Knight Main Theme - Hans Zimmer.mp3" },
+      { title: "How Soon Is Now?",                           artist: "The Smiths",                               file: "The Smiths - How Soon Is Now.mp3" },
+      { title: "Ain't Talkin' 'Bout Love (Instrumental)",    artist: "Van Halen",                                file: "Van Halen - Ain't Talkin' 'Bout Love (Instrumental).mp3" },
+      { title: "Y'all Ready for This (Space Jam Theme)",     artist: "",                                         file: "Y'all ready for this - (Space Jam Theme).mp3" },
+      { title: "Situation",                                  artist: "Yaz",                                      file: "Yaz - Situation.mp3" },
+    ];
+
+    /*****************************************************************
+     * DYNAMIC DATA MANAGEMENT (Local Storage Merging)
+     *****************************************************************/
+    let activeAdminPinHash = localStorage.getItem('lax-admin-pin') || defaultAdminPinHash;
+    let activePlayers = JSON.parse(localStorage.getItem('lax-players')) || defaultPlayers;
+    let activeExtras = JSON.parse(localStorage.getItem('lax-extras')) || defaultExtras;
+    let activePlaylist = JSON.parse(localStorage.getItem('lax-playlist')) || defaultPlaylist;
+    let missingSongsSet = new Set(JSON.parse(localStorage.getItem('lax-missing')) || defaultMissingSongs);
+    let lockedButtonsSet = new Set(JSON.parse(localStorage.getItem('lax-locked')) || defaultLockedButtons);
+    
+    let cardColors = JSON.parse(localStorage.getItem('lax-card-colors')) || defaultCardColors;
+    let songsLayoutOrder = JSON.parse(localStorage.getItem('lax-songs-layout')) || defaultSongsLayoutOrder;
+    let playlistLayoutOrder = JSON.parse(localStorage.getItem('lax-playlist-layout')) || defaultPlaylistLayoutOrder;
+    let activeSpacersSongs = JSON.parse(localStorage.getItem('lax-spacers-songs')) || defaultSpacersSongs;
+    let activeSpacersPlaylist = JSON.parse(localStorage.getItem('lax-spacers-playlist')) || defaultSpacersPlaylist;
+
+    function saveAllData() {
+      localStorage.setItem('lax-admin-pin', activeAdminPinHash);
+      localStorage.setItem('lax-players', JSON.stringify(activePlayers));
+      localStorage.setItem('lax-extras', JSON.stringify(activeExtras));
+      localStorage.setItem('lax-playlist', JSON.stringify(activePlaylist));
+      localStorage.setItem('lax-missing', JSON.stringify(Array.from(missingSongsSet)));
+      localStorage.setItem('lax-locked', JSON.stringify(Array.from(lockedButtonsSet)));
+      localStorage.setItem('lax-card-colors', JSON.stringify(cardColors));
+      localStorage.setItem('lax-songs-layout', JSON.stringify(songsLayoutOrder));
+      localStorage.setItem('lax-playlist-layout', JSON.stringify(playlistLayoutOrder));
+      localStorage.setItem('lax-spacers-songs', JSON.stringify(activeSpacersSongs));
+      localStorage.setItem('lax-spacers-playlist', JSON.stringify(activeSpacersPlaylist));
+    }
+
+    let songsLayout = [];
+    let playlistLayout = [];
+
+    function buildLayouts() {
+      songsLayout = activePlayers.map(p => ({ ...p, _type: 'player', _dragId: 'player_' + p.num }));
+      activeExtras.forEach(x => songsLayout.push({ ...x, _type: 'extra', _dragId: 'extra_' + x.key }));
+      activeSpacersSongs.forEach(id => songsLayout.push({ _type: 'spacer', _dragId: id }));
+      
+      playlistLayout = activePlaylist.map(p => {
+        // Stable Drag IDs for playlists
+        const safeTitle = (p.title || 'U').replace(/[^a-zA-Z0-9]/g, '_');
+        const safeArtist = (p.artist || 'U').replace(/[^a-zA-Z0-9]/g, '_');
+        return { ...p, _type: 'playlist', _dragId: `pl_${safeTitle}_${safeArtist}` };
+      });
+      activeSpacersPlaylist.forEach(id => playlistLayout.push({ _type: 'spacer', _dragId: id }));
+
+      // Auto-sync the exact layouts
+      let currentSongsIds = songsLayout.map(x => x._dragId);
+      songsLayoutOrder = songsLayoutOrder.filter(id => currentSongsIds.includes(id));
+      currentSongsIds.forEach(id => {
+          if (!songsLayoutOrder.includes(id)) songsLayoutOrder.push(id);
+      });
+      localStorage.setItem('lax-songs-layout', JSON.stringify(songsLayoutOrder));
+
+      let currentPlaylistIds = playlistLayout.map(x => x._dragId);
+      playlistLayoutOrder = playlistLayoutOrder.filter(id => currentPlaylistIds.includes(id));
+      currentPlaylistIds.forEach(id => {
+          if (!playlistLayoutOrder.includes(id)) playlistLayoutOrder.push(id);
+      });
+      localStorage.setItem('lax-playlist-layout', JSON.stringify(playlistLayoutOrder));
+
+      // Re-sort layouts
+      songsLayout.sort((a, b) => songsLayoutOrder.indexOf(a._dragId) - songsLayoutOrder.indexOf(b._dragId));
+      playlistLayout.sort((a, b) => playlistLayoutOrder.indexOf(a._dragId) - playlistLayoutOrder.indexOf(b._dragId));
+    }
+    buildLayouts(); // Run initially
+
+    const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal", PLAYLIST: "playlist" });
+    let currentMode = Mode.SONGS;
+    let isAdmin = false;
+
+    // Track all actively playing tracks
+    const activeTracks = new Map(); // cardEl -> { audio, gainNode, mediaNode, fadeTimer }
+
+    const blobUrlCache = new Map();
+    let audioCtx = null;
+    let audioUnlocked = false;
+
+    const grid = document.getElementById("grid");
+    const status = document.getElementById("status");
+    const modeBanner = document.getElementById("modeBanner");
+
+    const songsTab    = document.getElementById("songsTab");
+    const goalTab     = document.getElementById("goalTab");
+    const playlistTab = document.getElementById("playlistTab");
+    const stopBtn     = document.getElementById("stopBtn");
+    const cacheBtn    = document.getElementById("cacheBtn");
+    const exportBtn   = document.getElementById("exportBtn");
+
+    /*****************************************************************
+     * CUSTOM UI MODALS & MENUS
+     *****************************************************************/
+    const colorPalette = [
+      { name: 'Red', bg: '#ffebee', border: '#ef9a9a' },
+      { name: 'Orange', bg: '#fff3e0', border: '#ffcc80' },
+      { name: 'Yellow', bg: '#fffde7', border: '#fff59d' },
+      { name: 'Green', bg: '#e8f5e9', border: '#a5d6a7' },
+      { name: 'Blue', bg: '#e3f2fd', border: '#90caf9' },
+      { name: 'Purple', bg: '#f3e5f5', border: '#ce93d8' },
+      { name: 'Pink', bg: '#fce4ec', border: '#f48fb1' },
+      { name: 'Gray', bg: '#f5f5f5', border: '#e0e0e0' }
+    ];
+    
+    let activeActionId = null;
+    let isMenuRecent = false; 
+    let isMoveMode = false;
+    let moveSourceId = null;
+
+    /*****************************************************************
+     * ADMIN UNLOCK LOGIC 
+     *****************************************************************/
+    let failedPinAttempts = 0;
+    
+    document.getElementById('editBoardBtn').addEventListener('click', () => {
+      if (isAdmin) return; // already unlocked
+      
+      document.getElementById('adminPinInput').value = "";
+      
+      // Dynamically change text if PIN hasn't been set yet
+      if (!activeAdminPinHash) {
+        document.getElementById('pinModalTitle').textContent = "Create Admin PIN";
+        document.getElementById('pinModalDesc').textContent = "Create a 4-digit PIN to secure the board.";
+        document.getElementById('pinModalBtn').textContent = "Set PIN";
+      } else {
+        document.getElementById('pinModalTitle').textContent = "Enter Admin PIN";
+        document.getElementById('pinModalDesc').textContent = "Enter PIN to unlock editing tools.";
+        document.getElementById('pinModalBtn').textContent = "Unlock";
+      }
+
+      document.getElementById('pinModalOverlay').style.display = 'flex';
+      setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
+    });
+
+    document.getElementById('lockAdminBtn').addEventListener('click', () => {
+      isAdmin = false;
+      document.body.classList.remove('admin-mode');
+      isMoveMode = false;
+      moveSourceId = null;
+      setStatus("Board is now locked.");
+      renderGrid();
+    });
+
+    // Scrambles the PIN so the plaintext isn't stored in the code
+    function encodePIN(pin) {
+      return btoa(pin + "_lax2026"); 
+    }
+
+    window.checkAdminPin = function() {
+      const input = document.getElementById('adminPinInput').value;
+      if (!input) return;
+
+      if (!activeAdminPinHash) {
+        // Setting a new PIN for the first time
+        activeAdminPinHash = encodePIN(input);
+        saveAllData();
+        isAdmin = true;
+        document.body.classList.add('admin-mode');
+        document.getElementById('pinModalOverlay').style.display = 'none';
+        setStatus("PIN Set! Be sure to use 'Export Code' to save this permanently.");
+        renderGrid();
+      } else {
+        // Checking against existing PIN hash
+        if (encodePIN(input) === activeAdminPinHash) {
+          failedPinAttempts = 0; // reset on success
+          isAdmin = true;
+          document.body.classList.add('admin-mode');
+          document.getElementById('pinModalOverlay').style.display = 'none';
+          setStatus("Admin Mode Unlocked!");
+          renderGrid();
+        } else {
+          failedPinAttempts++;
+          if (failedPinAttempts >= 3) {
+            alert('Incorrect PIN.\n\nIf you forgot your PIN, go into GitHub, edit the index.html file to change defaultAdminPinHash back to "", commit the change, and refresh the app to create a new one.');
+          } else {
+            alert("Incorrect PIN.");
+          }
+          document.getElementById('adminPinInput').value = "";
+        }
+      }
+    }
 
 
-# -----------------------
-# UI Setup
-# -----------------------
-init_state()
+    let isEditModeNew = false;
+    let editingItemType = null; // 'player', 'extra', 'playlist'
 
-st.set_page_config(page_title="SLEI v2.0", layout="wide")
-st.title("STAR Leadership Effectiveness Index (SLEI) – v2 Pilot")
+    function initColorPicker() {
+      const container = document.getElementById('swatchContainer');
+      if (!container) return; // safety check
+      const defSwatch = document.createElement('div');
+      defSwatch.className = 'color-swatch default-swatch';
+      defSwatch.innerHTML = '&times;';
+      defSwatch.onclick = () => selectColor(null, null);
+      container.appendChild(defSwatch);
 
-st.markdown(
-    """**Purpose**
+      colorPalette.forEach(c => {
+        const el = document.createElement('div');
+        el.className = 'color-swatch';
+        el.style.background = c.bg;
+        el.style.borderColor = c.border;
+        el.onclick = () => selectColor(c.bg, c.border);
+        container.appendChild(el);
+      });
+    }
 
-This assessment is designed to support your continued development and help us improve the program.
+    window.openActionMenu = function(dragId) {
+      activeActionId = dragId;
+      
+      const isLocked = lockedButtonsSet.has(dragId);
+      document.getElementById('menuLockBtn').textContent = isLocked ? "Unlock Button" : "Lock Button";
+      
+      const moveBtn = document.getElementById('menuMoveBtn');
+      moveBtn.disabled = isLocked;
+      moveBtn.style.opacity = isLocked ? '0.4' : '1';
 
-**Structure**
+      // Distinguish styling if we are editing a blank spacer block
+      const isSpacer = dragId.startsWith('spacer_');
+      document.getElementById('menuEditBtn').style.display = isSpacer ? 'none' : 'block';
+      document.getElementById('menuColorBtn').style.display = isSpacer ? 'none' : 'block';
+      document.getElementById('menuDeleteBtn').textContent = isSpacer ? 'Remove Blank Space (Shifts Layout)' : 'Delete Button (Leaves Blank Space)';
+      
+      document.getElementById('actionMenuOverlay').style.display = 'flex';
+      isMenuRecent = true; 
+      setTimeout(() => isMenuRecent = false, 500);
+    }
 
-You will answer 16 questions about key leadership behaviors in two sections:
-1. The **Current Frequency** section asks you to indicate how often you perform these behaviors now (after completing the course).
-2. The **Change in Frequency** section asks how your current frequency compares to the frequency before the course.
+    window.closeActionMenu = function() {
+      document.getElementById('actionMenuOverlay').style.display = 'none';
+    }
 
-Because leadership looks different across contexts, select one role and use it consistently so your responses are accurate and comparable.
-"""
-)
+    window.handleActionSelection = function(action) {
+      window.closeActionMenu();
+      if (action === 'color') {
+        document.getElementById('colorPickerOverlay').style.display = 'flex';
+      } else if (action === 'move') {
+        isMoveMode = true;
+        moveSourceId = activeActionId;
+        setStatus("MOVE MODE: Tap destination to swap.");
+        renderGrid(); 
+      } else if (action === 'edit') {
+        window.openEditModal(false, activeActionId);
+      } else if (action === 'lock') {
+        if (lockedButtonsSet.has(activeActionId)) {
+          lockedButtonsSet.delete(activeActionId);
+        } else {
+          lockedButtonsSet.add(activeActionId);
+        }
+        saveAllData();
+        renderGrid();
+      } else if (action === 'delete') {
+        const msg = activeActionId.startsWith('spacer_') ? "Remove this blank space? (Buttons below it will shift up)" : "Delete this button? (A blank space will be left behind so other locked buttons don't shift)";
+        if (confirm(msg)) {
+           deleteButton(activeActionId);
+        }
+      }
+    }
+
+    window.closeColorPicker = function() {
+      document.getElementById('colorPickerOverlay').style.display = 'none';
+      activeActionId = null;
+    }
+
+    function selectColor(bg, border) {
+      if (!activeActionId) return;
+      if (bg === null) {
+        delete cardColors[activeActionId];
+      } else {
+        cardColors[activeActionId] = { bg, border };
+      }
+      saveAllData();
+      renderGrid(); 
+      window.closeColorPicker();
+    }
+
+    /*****************************************************************
+     * ADD/EDIT BUTTON LOGIC
+     *****************************************************************/
+    function deleteButton(dragId) {
+      const isSpacer = dragId.startsWith('spacer_');
+      
+      if (isSpacer) {
+          activeSpacersSongs = activeSpacersSongs.filter(id => id !== dragId);
+          activeSpacersPlaylist = activeSpacersPlaylist.filter(id => id !== dragId);
+      } else {
+          // Replace deleted button with a Spacer so locked layout positions DO NOT shift!
+          const newSpacerId = 'spacer_' + Date.now();
+          
+          if (currentMode === Mode.PLAYLIST) {
+              activeSpacersPlaylist.push(newSpacerId);
+              const idx = playlistLayoutOrder.indexOf(dragId);
+              if (idx > -1) playlistLayoutOrder[idx] = newSpacerId;
+          } else {
+              activeSpacersSongs.push(newSpacerId);
+              const idx = songsLayoutOrder.indexOf(dragId);
+              if (idx > -1) songsLayoutOrder[idx] = newSpacerId;
+          }
+
+          if (dragId.startsWith('player_')) {
+            const num = Number(dragId.replace('player_', ''));
+            activePlayers = activePlayers.filter(p => p.num !== num);
+            missingSongsSet.delete(num);
+          } else if (dragId.startsWith('extra_')) {
+            const key = dragId.replace('extra_', '');
+            activeExtras = activeExtras.filter(e => e.key !== key);
+          } else if (dragId.startsWith('pl_')) {
+            const itemToRemove = playlistLayout.find(p => p._dragId === dragId);
+            if(itemToRemove) {
+              activePlaylist = activePlaylist.filter(p => p.title !== itemToRemove.title || p.artist !== itemToRemove.artist);
+            }
+          }
+      }
+      
+      delete cardColors[dragId];
+      lockedButtonsSet.delete(dragId);
+      
+      saveAllData();
+      buildLayouts();
+      renderGrid();
+    }
+
+    function getPredictedFileNames(topText, bottomText, type) {
+      if (type === 'player') {
+        const num = Number(topText);
+        if (isNaN(num)) return { song: "INVALID_NUMBER.mp3", goal: "INVALID_NUMBER_Goal.mp3" };
+        const numStr = String(num).padStart(2, '0');
+        const nameSafe = String(bottomText).trim().replace(/\s+/g, '_');
+        return { song: `${numStr}_${nameSafe}.mp3`, goal: `${numStr}_${nameSafe}_Goal.mp3` };
+      } else if (type === 'extra') {
+        const keySafe = String(topText).trim().replace(/\s+/g, '_');
+        return { song: `extras/${keySafe}.mp3`, goal: `extras/${keySafe}_Goal.mp3` };
+      } else {
+        // Updated playlist logic to correctly map standard formatting based on inputs
+        const title = String(topText).trim() || "[Song Title]";
+        const artist = String(bottomText).trim();
+        if (artist) {
+            return { file: `${artist} - ${title}.mp3` };
+        } else {
+            return { file: `${title}.mp3` };
+        }
+      }
+    }
+
+    window.updateEditInstructions = function() {
+      const top = document.getElementById('editTopInput').value;
+      const bot = document.getElementById('editBottomInput').value;
+      const box = document.getElementById('editInstructions');
+
+      if (editingItemType === 'player') {
+        const f = getPredictedFileNames(top, bot, 'player');
+        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+      } else if (editingItemType === 'extra') {
+        const f = getPredictedFileNames(top, bot, 'extra');
+        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+      } else {
+        const f = getPredictedFileNames(top, bot, 'playlist');
+        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the <strong>/audio/playlist/</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+      }
+    }
+
+    window.openEditModal = function(isNew, dragId = null) {
+      isEditModeNew = isNew;
+      activeActionId = dragId;
+
+      const topLabel = document.getElementById('editTopLabel');
+      const bottomLabel = document.getElementById('editBottomLabel');
+      const topInput = document.getElementById('editTopInput');
+      const bottomInput = document.getElementById('editBottomInput');
+      const missingInput = document.getElementById('editMissingInput');
+
+      if (isNew) {
+        document.getElementById('editModalTitle').textContent = "Add New Button";
+        topInput.value = "";
+        bottomInput.value = "";
+        missingInput.checked = true; // Default new buttons to missing until uploaded
+
+        if (currentMode === Mode.PLAYLIST) {
+          editingItemType = 'playlist';
+          topLabel.textContent = "Song Title";
+          bottomLabel.textContent = "Artist";
+          missingInput.parentElement.style.display = 'none'; // Playlist items don't use the dash system
+        } else {
+          // Assume Player for Songs/Goals page
+          editingItemType = 'player';
+          topLabel.textContent = "Player Number";
+          bottomLabel.textContent = "Player Name";
+          missingInput.parentElement.style.display = 'flex';
+        }
+      } else {
+        document.getElementById('editModalTitle').textContent = "Edit Button";
+        let targetItem;
+        
+        if (dragId.startsWith('player_')) {
+          editingItemType = 'player';
+          topLabel.textContent = "Player Number";
+          bottomLabel.textContent = "Player Name";
+          missingInput.parentElement.style.display = 'flex';
+          
+          targetItem = activePlayers.find(p => p.num == dragId.replace('player_', ''));
+          if (targetItem) {
+            topInput.value = targetItem.num;
+            bottomInput.value = targetItem.name;
+            missingInput.checked = missingSongsSet.has(targetItem.num);
+          }
+        } else if (dragId.startsWith('extra_')) {
+          editingItemType = 'extra';
+          topLabel.textContent = "Top Text";
+          bottomLabel.textContent = "Bottom Text";
+          missingInput.parentElement.style.display = 'none'; // Extras don't use dash system in current build
+
+          targetItem = activeExtras.find(e => e.key == dragId.replace('extra_', ''));
+          if (targetItem) {
+            topInput.value = targetItem.labelTop;
+            bottomInput.value = targetItem.labelBottom;
+          }
+        } else {
+          editingItemType = 'playlist';
+          topLabel.textContent = "Song Title";
+          bottomLabel.textContent = "Artist";
+          missingInput.parentElement.style.display = 'none';
+
+          targetItem = playlistLayout.find(p => p._dragId == dragId);
+          if (targetItem) {
+            topInput.value = targetItem.title;
+            bottomInput.value = targetItem.artist;
+          }
+        }
+      }
+
+      window.updateEditInstructions();
+      document.getElementById('editModalOverlay').style.display = 'flex';
+    }
+
+    window.closeEditModal = function() {
+      document.getElementById('editModalOverlay').style.display = 'none';
+      activeActionId = null;
+    }
+
+    window.saveEditModal = function() {
+      const topStr = document.getElementById('editTopInput').value.trim();
+      const botStr = document.getElementById('editBottomInput').value.trim();
+      const isMissing = document.getElementById('editMissingInput').checked;
+
+      if (!topStr) {
+        alert("Please enter the top text/number.");
+        return;
+      }
+
+      if (isEditModeNew) {
+        if (editingItemType === 'player') {
+          const num = Number(topStr);
+          const f = getPredictedFileNames(num, botStr, 'player');
+          activePlayers.push({ num: num, name: botStr, songFile: f.song, goalFile: f.goal });
+          if (isMissing) missingSongsSet.add(num);
+          else missingSongsSet.delete(num);
+        } else if (editingItemType === 'playlist') {
+          const f = getPredictedFileNames(topStr, botStr, 'playlist');
+          activePlaylist.push({ title: topStr, artist: botStr, file: f.file });
+        }
+      } else {
+        // Editing existing
+        if (editingItemType === 'player') {
+          const oldNum = Number(activeActionId.replace('player_', ''));
+          const newNum = Number(topStr);
+          const pIdx = activePlayers.findIndex(p => p.num === oldNum);
+          if (pIdx > -1) {
+            const f = getPredictedFileNames(newNum, botStr, 'player');
+            activePlayers[pIdx].num = newNum;
+            activePlayers[pIdx].name = botStr;
+            activePlayers[pIdx].songFile = f.song;
+            activePlayers[pIdx].goalFile = f.goal;
+            
+            // Handle missing state changes
+            missingSongsSet.delete(oldNum);
+            if (isMissing) missingSongsSet.add(newNum);
+
+            // Port over properties to new ID if number changed
+            if (oldNum !== newNum) {
+              if (cardColors[activeActionId]) {
+                cardColors['player_' + newNum] = cardColors[activeActionId];
+                delete cardColors[activeActionId];
+              }
+              if (lockedButtonsSet.has(activeActionId)) {
+                lockedButtonsSet.delete(activeActionId);
+                lockedButtonsSet.add('player_' + newNum);
+              }
+            }
+          }
+        } else if (editingItemType === 'extra') {
+          const key = activeActionId.replace('extra_', '');
+          const eIdx = activeExtras.findIndex(e => e.key === key);
+          if (eIdx > -1) {
+            activeExtras[eIdx].labelTop = topStr;
+            activeExtras[eIdx].labelBottom = botStr;
+            const f = getPredictedFileNames(topStr, botStr, 'extra');
+            activeExtras[eIdx].songFile = f.song;
+            activeExtras[eIdx].goalFile = f.goal;
+          }
+        } else if (editingItemType === 'playlist') {
+          const targetItem = playlistLayout.find(p => p._dragId == activeActionId);
+          if (targetItem) {
+             const plIdx = activePlaylist.findIndex(p => p.title === targetItem.title && p.artist === targetItem.artist);
+             if (plIdx > -1) {
+                // Update title, artist, AND exactly what the filename should now be predicted as!
+                const f = getPredictedFileNames(topStr, botStr, 'playlist');
+                activePlaylist[plIdx].title = topStr;
+                activePlaylist[plIdx].artist = botStr;
+                activePlaylist[plIdx].file = f.file;
+                
+                // Because ID is based on title/artist, we need to map colors if they renamed it
+                const safeTitle = (topStr || 'U').replace(/[^a-zA-Z0-9]/g, '_');
+                const safeArtist = (botStr || 'U').replace(/[^a-zA-Z0-9]/g, '_');
+                const newDragId = `pl_${safeTitle}_${safeArtist}`;
+                
+                if (activeActionId !== newDragId) {
+                   if (cardColors[activeActionId]) {
+                     cardColors[newDragId] = cardColors[activeActionId];
+                     delete cardColors[activeActionId];
+                   }
+                   if (lockedButtonsSet.has(activeActionId)) {
+                     lockedButtonsSet.delete(activeActionId);
+                     lockedButtonsSet.add(newDragId);
+                   }
+                }
+             }
+          }
+        }
+      }
+
+      saveAllData();
+      buildLayouts();
+      window.closeEditModal();
+      renderGrid();
+    }
+
+    window.showExportCode = function() {
+      // Export completely encapsulates current memory settings to fix cross-device syncing
+      let code = `// COPY AND PASTE THIS TO REPLACE THE ARRAYS AT THE TOP OF YOUR index.html\n\n`;
+      code += `const defaultAdminPinHash = "${activeAdminPinHash}";\n`;
+      code += `const defaultMissingSongs = ${JSON.stringify(Array.from(missingSongsSet))};\n`;
+      code += `const defaultLockedButtons = ${JSON.stringify(Array.from(lockedButtonsSet))};\n`;
+      code += `const defaultCardColors = ${JSON.stringify(cardColors, null, 2)};\n`;
+      code += `const defaultSongsLayoutOrder = ${JSON.stringify(songsLayoutOrder, null, 2)};\n`;
+      code += `const defaultPlaylistLayoutOrder = ${JSON.stringify(playlistLayoutOrder, null, 2)};\n`;
+      code += `const defaultSpacersSongs = ${JSON.stringify(activeSpacersSongs, null, 2)};\n`;
+      code += `const defaultSpacersPlaylist = ${JSON.stringify(activeSpacersPlaylist, null, 2)};\n\n`;
+      
+      code += `const defaultPlayers = ${JSON.stringify(activePlayers, null, 2)};\n\n`;
+      code += `const defaultExtras = ${JSON.stringify(activeExtras, null, 2)};\n\n`;
+      code += `const defaultPlaylist = ${JSON.stringify(activePlaylist, null, 2)};\n`;
+      
+      document.getElementById('exportTextArea').value = code;
+      document.getElementById('exportModalOverlay').style.display = 'flex';
+    }
 
 
-# -----------------------
-# Step 1 of 5 — Context
-# -----------------------
-if st.session_state.step == 1:
-    st.header("Step 1 of 5 — Context")
+    /*****************************************************************
+     * PLAYBACK LOGIC
+     *****************************************************************/
+    function setStatus(text){ status.textContent = text || ""; }
 
-    st.session_state.role_anchor = st.selectbox(
-        "Which single leadership role will you use as your reference point? (required)",
-        [
-            "My primary professional/employer role",
-            "A volunteer or board leadership role",
-            "A family or community leadership role",
-            "Other",
-        ],
-        index=None,
-        placeholder="Select one…",
-    )
-    if st.session_state.role_anchor == "Other":
-        st.session_state.role_anchor_other = st.text_input(
-            "If Other, please specify (required)",
-            value=st.session_state.role_anchor_other,
-        )
+    function flashButton(el){
+      if(!el) return;
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 140);
+    }
 
-    st.session_state.profession = st.selectbox(
-        "Profession type (required)",
-        ["Student", "Resident", "Pharmacy Technician", "Pharmacist", "Other"],
-        index=None,
-        placeholder="Select one…",
-    )
-    if st.session_state.profession == "Other":
-        st.session_state.profession_other = st.text_input(
-            "If Other, please specify (required)",
-            value=st.session_state.profession_other,
-        )
+    function stopTrackImmediate(cardEl) {
+      const track = activeTracks.get(cardEl);
+      if (!track) return;
+      if (track.fadeTimer) clearInterval(track.fadeTimer);
+      if (track.audio) {
+        try { track.audio.pause(); } catch(e){}
+        try { track.audio.currentTime = 0; } catch(e){}
+      }
+      if (track.mediaNode) { try { track.mediaNode.disconnect(); } catch(e){} }
+      if (track.gainNode) { try { track.gainNode.disconnect(); } catch(e){} }
+      
+      cardEl.classList.remove("playing");
+      cardEl.style.removeProperty('--progress');
+      activeTracks.delete(cardEl);
+      
+      if (activeTracks.size === 0) setStatus("");
+    }
 
-    st.session_state.years = st.selectbox(
-        "Years of experience (required)",
-        ["0–2", "3–5", "6–10", "11–15", "16–20", "21+"],
-        index=None,
-        placeholder="Select one…",
-    )
+    function stopAllImmediate(){
+      const cards = Array.from(activeTracks.keys());
+      cards.forEach(c => stopTrackImmediate(c));
+    }
 
-    st.session_state.scope = st.selectbox(
-        "Leadership scope (required)",
-        [
-            "Individual contributor (no direct reports)",
-            "Supervisor / Manager of individuals",
-            "Manager of managers",
-            "Senior leader / executive",
-            "Other",
-        ],
-        index=None,
-        placeholder="Select one…",
-    )
-    if st.session_state.scope == "Other":
-        st.session_state.scope_other = st.text_input(
-            "If Other, please specify (required)",
-            value=st.session_state.scope_other,
-        )
+    function ensureAudioContext(){
+      if (!audioCtx){
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioCtx;
+    }
 
-    cols = st.columns([1, 1, 6])
-    with cols[0]:
-        st.button("Next →", type="primary", on_click=go_next)
+    async function unlockAudio(){
+      const ctx = ensureAudioContext();
+      if (ctx.state === "suspended"){
+        try { await ctx.resume(); } catch(e){}
+      }
+      if (audioUnlocked) return;
+      try {
+        const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch(e){}
+      audioUnlocked = true;
+    }
 
-    missing = required_missing_step1()
-    if missing:
-        st.info("To continue, complete: " + ", ".join(missing))
+    function stopTrackWithFade(cardEl) {
+      const track = activeTracks.get(cardEl);
+      if (!track || !track.audio) {
+        stopTrackImmediate(cardEl);
+        return;
+      }
+      
+      cardEl.classList.remove("playing"); // remove UI early
+      if (track.fadeTimer) clearInterval(track.fadeTimer);
 
-    if st.session_state.step == 2 and missing:
-        st.session_state.step = 1
+      const audio = track.audio;
+      const totalMs = Math.max(300, Math.round(FADE_TOTAL_SEC * 1000));
+      const holdMs  = Math.max(0, Math.min(totalMs - 50, Math.round(FADE_HOLD_SEC * 1000)));
+      const startTs = performance.now();
 
+      const hasGain = !!(track.gainNode && audioCtx);
+      const startGain = hasGain ? (track.gainNode.gain.value || 1) : (audio.volume ?? 1);
 
-# -----------------------
-# Step 2 of 5 — Current frequency
-# -----------------------
-elif st.session_state.step == 2:
-    st.header("Step 2 of 5 — Current frequency")
-    st.caption(
-        "For each item, select how often you perform it now. Choose ‘Not applicable’ if it does not apply to the role you selected."
-    )
+      track.fadeTimer = setInterval(() => {
+        const t = performance.now() - startTs;
 
-    for qid, text, _ in ITEMS:
-        st.session_state.freq_sel[qid] = st.radio(
-            f"Q{qid}. {text}",
-            FREQ_OPTIONS,
-            index=None,
-            horizontal=True,
-            key=f"freq_{qid}",
-        )
+        if (t <= holdMs){
+          if (hasGain) track.gainNode.gain.value = startGain;
+          else audio.volume = startGain;
+          return;
+        }
 
-    cols = st.columns([1, 1, 6])
-    with cols[0]:
-        st.button("← Back", on_click=go_prev)
-    with cols[1]:
-        st.button("Next →", type="primary", on_click=go_next)
+        const p = Math.min(1, (t - holdMs) / Math.max(1, (totalMs - holdMs)));
+        const smooth = p * p * (3 - 2 * p);
+        const cosine = 0.5 - 0.5 * Math.cos(Math.PI * smooth);
+        const v = Math.max(0.0001, startGain * (1 - cosine));
 
-    missing_qs = required_missing_freq()
-    if missing_qs:
-        st.info(f"To continue, answer all current-frequency items (missing: {len(missing_qs)}).")
+        if (hasGain) track.gainNode.gain.value = v;
+        else audio.volume = v;
 
-    if st.session_state.step == 3 and missing_qs:
-        st.session_state.step = 2
+        if (p >= 1){
+          clearInterval(track.fadeTimer);
+          stopTrackImmediate(cardEl);
+        }
+      }, 33);
+    }
 
+    function stopAllWithFade() {
+      const cards = Array.from(activeTracks.keys());
+      cards.forEach(c => stopTrackWithFade(c));
+    }
 
-# -----------------------
-# Step 3 of 5 — Change in frequency (hidden for N/A)
-# -----------------------
-elif st.session_state.step == 3:
-    st.header("Step 3 of 5 — Change in frequency")
-    st.caption("You’ll only see change questions for items you did not mark as ‘Not applicable.’")
+    async function playAudio(src, label, buttonEl){
+      await unlockAudio();
+      const ctx = ensureAudioContext();
+      if (ctx.state === "suspended"){
+        try { await ctx.resume(); } catch(e){}
+      }
 
-    non_na_ids = [qid for qid, _, _ in ITEMS if st.session_state.freq_sel.get(qid) != "Not applicable to my role"]
+      let finalSrc = src;
+      let isCached = false;
+      try {
+        if ('caches' in window) {
+          const cache = await caches.open('lax-audio-v1');
+          const cachedRes = await cache.match(src);
+          if (cachedRes) {
+            isCached = true;
+            if (blobUrlCache.has(src)) {
+              finalSrc = blobUrlCache.get(src);
+            } else {
+              const blob = await cachedRes.blob();
+              finalSrc = URL.createObjectURL(blob);
+              blobUrlCache.set(src, finalSrc);
+            }
+          } else {
+            // Tell fetch to bypass browser cache to ensure it grabs the latest from GH if available
+            fetch(src, { cache: 'no-store' }).then(res => {
+              if (res.ok) cache.put(src, res.clone());
+            }).catch(() => console.log("Background cache failed"));
+          }
+        }
+      } catch(e) { console.warn("Cache API Error:", e); }
 
-    if not non_na_ids:
-        st.warning("You marked all items as ‘Not applicable.’ You can still provide optional feedback.")
-    else:
-        for qid, text, _ in ITEMS:
-            if qid not in non_na_ids:
-                continue
-            st.session_state.chg_sel[qid] = st.radio(
-                f"Q{qid}. {text}",
-                CHANGE_OPTIONS,
-                index=None,
-                horizontal=True,
-                key=f"chg_{qid}",
-            )
+      // CACHE BUSTER: Force Safari to bypass any previously cached 404 errors
+      // This ensures that right after you upload a new song to GitHub, it actually checks for it!
+      if (!isCached) {
+        finalSrc = src + "?cb=" + new Date().getTime();
+      }
 
-    cols = st.columns([1, 1, 6])
-    with cols[0]:
-        st.button("← Back", on_click=go_prev)
-    with cols[1]:
-        st.button("Next →", type="primary", on_click=go_next)
+      const audio = new Audio(finalSrc);
+      audio.preload = "auto";
+      audio.volume = 1.0;
+      audio.muted = false;
+      audio.playsInline = true;
 
-    missing_chg = required_missing_change(non_na_ids)
-    if non_na_ids and missing_chg:
-        st.info(f"To continue, answer all change items shown (missing: {len(missing_chg)}).")
+      const updateProgress = () => {
+        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
+          const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+          buttonEl.style.setProperty('--progress', `${pct}%`);
+        }
+      };
+      audio.addEventListener('timeupdate', updateProgress);
 
-    if st.session_state.step == 4 and non_na_ids and missing_chg:
-        st.session_state.step = 3
+      audio.addEventListener("error", () => {
+        const fullUrl = new URL(src, window.location.href).href; 
+        const decodedName = decodeURIComponent(fullUrl.split('/').pop());
+        
+        let folderPath = '/audio/songs/';
+        if (currentMode === Mode.PLAYLIST) folderPath = '/audio/playlist/';
+        else if (currentMode === Mode.GOAL) folderPath = '/audio/goals/';
+        
+        // This triggers the new explicit modal you requested!
+        document.getElementById('errorMessageText').innerHTML = `Please add your audio file into the <strong>${folderPath}</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub and ensure it is named exactly:<br><br><div style="font-family:monospace; background:#f0f0f0; padding:10px; border-radius:8px; font-size: 15px; font-weight: bold; border: 1px solid #ddd; word-break: break-all;">${decodedName}</div><br><span style="font-size:13px; color:#555;"><i>Tip: GitHub is strictly case-sensitive. <b>.MP3</b> is different from <b>.mp3</b>!</i></span><br><br><div style="text-align:center;"><a href="${fullUrl}" target="_blank" style="color: var(--purple); font-weight: bold; text-decoration: underline; font-size: 15px;">Tap here to test the raw link</a><br><span style="font-size:12px; color:#666;">(If this opens a "404 Not Found" page, the file is definitely missing or named incorrectly on GitHub)</span></div>`;
+        document.getElementById('errorModalOverlay').style.display = 'flex';
+        
+        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
+          stopTrackImmediate(buttonEl);
+        }
+      });
 
+      let gainNode = null;
+      let mediaNode = null;
+      try {
+        gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+        gainNode.connect(ctx.destination);
+        mediaNode = ctx.createMediaElementSource(audio);
+        mediaNode.connect(gainNode);
+      } catch(e){
+        mediaNode = null;
+        gainNode = null;
+      }
 
-# -----------------------
-# Step 4 of 5 — Feedback
-# -----------------------
-elif st.session_state.step == 4:
-    st.header("Step 4 of 5 — Optional feedback")
+      if (activeTracks.has(buttonEl)) {
+        stopTrackImmediate(buttonEl);
+      }
 
-    st.session_state.improve_feedback = st.text_area(
-        "Any suggestions to improve the course structure, processes, systems, or curriculum? (optional)",
-        value=st.session_state.improve_feedback,
-        height=140,
-    )
+      activeTracks.set(buttonEl, { audio, gainNode, mediaNode, fadeTimer: null });
 
-    st.markdown("---")
-    st.subheader("Testimonial (optional)")
-    st.caption(
-        "If you’re willing, a helpful testimonial often includes: what changed for you, one concrete example, and what you’d say to someone considering the program."
-    )
+      if (buttonEl){
+        buttonEl.classList.add("playing");
+      }
 
-    st.session_state.testimonial = st.text_area(
-        "If you’d like, share a short testimonial or comment about the program (optional)",
-        value=st.session_state.testimonial,
-        height=140,
-    )
+      setStatus(`Playing: ${label}`);
 
-    cols = st.columns([1, 1, 6])
-    with cols[0]:
-        st.button("← Back", on_click=go_prev)
-    with cols[1]:
-        st.button("Review & submit →", type="primary", on_click=go_next)
+      audio.addEventListener("ended", () => {
+        if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
+          stopTrackImmediate(buttonEl);
+        }
+      });
 
+      try {
+        await audio.play();
+      } catch (err){
+        console.error("PLAY ERROR:", err);
+      }
+    }
 
-# -----------------------
-# Step 5 of 5 — Review & Submit (auto-generate dashboard)
-# -----------------------
-elif st.session_state.step == 5:
-    st.header("Step 5 of 5 — Review & submit")
+    async function syncOffline() {
+      if (!('caches' in window)) {
+        setStatus("Offline caching not supported in this browser.");
+        return;
+      }
+      cacheBtn.disabled = true;
+      const originalText = cacheBtn.textContent;
 
-    # Prevent duplicate generation/submission in the same session
-    if st.session_state.dashboard_generated and st.session_state.dashboard_bytes:
-        st.success("Submission complete. Your dashboard is ready below.")
-        st.download_button(
-            "Download your dashboard",
-            data=st.session_state.dashboard_bytes,
-            file_name=st.session_state.dashboard_filename or "SLEI_Dashboard.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        )
-        st.button("Start over", on_click=reset_all)
-        st.stop()
+      try {
+        const cache = await caches.open('lax-audio-v1');
+        const allUrls = [];
 
-    # Show a compact review (no scoring here)
-    role_anchor_disp = st.session_state.role_anchor_other.strip() if st.session_state.role_anchor == "Other" else st.session_state.role_anchor
-    profession_disp = st.session_state.profession_other.strip() if st.session_state.profession == "Other" else st.session_state.profession
-    scope_disp = st.session_state.scope_other.strip() if st.session_state.scope == "Other" else st.session_state.scope
+        activePlayers.forEach(p => {
+          if (!missingSongsSet.has(p.num)) allUrls.push(`${AUDIO_BASE}/songs/${p.songFile}`);
+          allUrls.push(`${AUDIO_BASE}/goals/${p.goalFile}`);
+        });
+        activeExtras.forEach(x => {
+          allUrls.push(`${AUDIO_BASE}/songs/${x.songFile}`);
+          allUrls.push(`${AUDIO_BASE}/goals/${x.goalFile}`);
+        });
+        activePlaylist.forEach(s => {
+          allUrls.push(`${AUDIO_BASE}/playlist/${encodeURIComponent(s.file)}`);
+        });
 
-    st.markdown(
-        f"""**Role anchor:** {role_anchor_disp or ''}  
-**Profession:** {profession_disp or ''}  
-**Years of experience:** {st.session_state.years or ''}  
-**Leadership scope:** {scope_disp or ''}"""
-    )
+        let loaded = 0;
+        let failed = 0;
 
-    cols = st.columns([1, 1, 6])
-    with cols[0]:
-        st.button("← Back", on_click=go_prev)
+        for (let i = 0; i < allUrls.length; i++) {
+          const url = allUrls[i];
+          const pct = Math.round(((i + 1) / allUrls.length) * 100);
+          cacheBtn.textContent = `Syncing ${pct}%`;
+          
+          const displayUrl = decodeURIComponent(url.split('/').pop());
+          setStatus(`Caching (${i+1}/${allUrls.length}): ${displayUrl}`);
 
-    with cols[1]:
-        submitted = st.button("Submit", type="primary")
+          try {
+            const existing = await cache.match(url);
+            if (!existing) {
+              const res = await fetch(url, { cache: 'no-store' });
+              if (res.ok) {
+                await cache.put(url, res);
+                loaded++;
+              } else {
+                failed++;
+              }
+            } else {
+              loaded++;
+            }
+          } catch(e) {
+            failed++;
+          }
+        }
 
-    if submitted:
-        # Safety checks
-        missing = required_missing_step1()
-        if missing:
-            st.error("Missing required fields: " + ", ".join(missing))
-            st.stop()
+        setStatus(`Sync complete! ${loaded} tracks ready for offline. ${failed > 0 ? failed + ' failed.' : ''}`);
+        cacheBtn.textContent = "Offline Ready \u2713";
+        setTimeout(() => { cacheBtn.textContent = originalText; }, 5000);
+      } catch(e) {
+        setStatus(`Sync failed: ${e.message}`);
+        cacheBtn.textContent = originalText;
+      }
+      cacheBtn.disabled = false;
+    }
 
-        missing_freq = required_missing_freq()
-        if missing_freq:
-            st.error("Missing current-frequency answers.")
-            st.stop()
+    function setMode(mode){
+      currentMode = mode;
+      
+      // If switching modes, ensure Move Mode is canceled
+      isMoveMode = false;
+      moveSourceId = null;
 
-        non_na_ids = [qid for qid, _, _ in ITEMS if st.session_state.freq_sel.get(qid) != "Not applicable to my role"]
-        missing_chg = required_missing_change(non_na_ids)
-        if non_na_ids and missing_chg:
-            st.error("Missing change answers for one or more items.")
-            st.stop()
+      if(mode === Mode.SONGS){
+        modeBanner.textContent = "SONG MODE";
+        modeBanner.className = "banner song";
+        songsTab.classList.add("active");
+        goalTab.classList.remove("active");
+        playlistTab.classList.remove("active");
+      } else if(mode === Mode.GOAL){
+        modeBanner.textContent = "GOAL MODE";
+        modeBanner.className = "banner goal";
+        goalTab.classList.add("active");
+        songsTab.classList.remove("active");
+        playlistTab.classList.remove("active");
+      } else {
+        modeBanner.textContent = "PLAYLIST MODE";
+        modeBanner.className = "banner playlist";
+        playlistTab.classList.add("active");
+        songsTab.classList.remove("active");
+        goalTab.classList.remove("active");
+      }
 
-        # Compute
-        freq_num, chg_num, overall, overall_desc, dom_scores, avg_change, pos_count = compute_scores()
+      renderGrid();
+      setStatus("");
+    }
 
-        # Build and generate dashboard
-        token_map = build_token_map()
-        dashboard_bytes = build_dashboard_bytes(token_map)
+    /* DRAG AND DROP HANDLERS */
+    let dragSrcEl = null;
 
-        generated_at = datetime.now(timezone.utc).isoformat()
-        safe_ts = generated_at.replace(":", "").replace("+", "").replace("-", "")
-        filename = f"SLEI_Dashboard_{safe_ts}.pptx"
+    function handleDragStart(e) {
+      dragSrcEl = this;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/html', this.innerHTML);
+      this.classList.add('dragging');
+    }
 
-        # Save submission row (includes dashboard metadata)
-        try:
-            ws = open_sheet()
+    function handleDragOver(e) {
+      if (e.preventDefault) {
+        e.preventDefault(); 
+      }
+      e.dataTransfer.dropEffect = 'move';
+      return false;
+    }
 
-            role_anchor = role_anchor_disp
-            profession = profession_disp
-            scope = scope_disp
+    function handleDragEnter(e) {
+      // Do not allow dragging over add card or locked cards
+      if (this !== dragSrcEl && !this.classList.contains('add-card') && !this.classList.contains('locked')) {
+        this.classList.add('over');
+      }
+    }
 
-            row = [
-                pd.Timestamp.utcnow().isoformat(),
-                APP_VERSION,
-                role_anchor,
-                profession,
-                st.session_state.years,
-                scope,
-                str(overall) if overall is not None else "",
-                overall_desc,
-                str(round1(avg_change)) if avg_change is not None else "",
-                "Yes" if (avg_change is not None and avg_change > 0) else "No",
-                "",  # willing_contact (deprecated in this flow)
-                st.session_state.testimonial.strip(),
-                st.session_state.improve_feedback.strip(),
-                "",  # contact_name
-                "",  # contact_email
-            ]
+    function handleDragLeave(e) {
+      this.classList.remove('over');
+    }
 
-            # freq_1..freq_16
-            row += [
-                str(freq_num[qid]) if isinstance(freq_num.get(qid), (int, float)) else ""
-                for qid in range(1, 17)
-            ]
+    function handleDrop(e) {
+      if (e.stopPropagation) {
+        e.stopPropagation();
+      }
+      // Prevent dropping on Add card or Locked cards
+      if (this.classList.contains('add-card') || this.classList.contains('locked')) return false; 
+      
+      if (dragSrcEl !== this) {
+        const srcDragId = dragSrcEl.dataset.dragId;
+        const destDragId = this.dataset.dragId;
+        
+        let activeOrder = currentMode === Mode.PLAYLIST ? playlistLayoutOrder : songsLayoutOrder;
 
-            # chg_1..chg_16 (blank for NA)
-            non_na_scored = [qid for qid in range(1, 17) if freq_num.get(qid) is not None]
-            row += [
-                str(chg_num[qid]) if (qid in non_na_scored and isinstance(chg_num.get(qid), (int, float))) else ""
-                for qid in range(1, 17)
-            ]
+        const srcIdx = activeOrder.indexOf(srcDragId);
+        const dstIdx = activeOrder.indexOf(destDragId);
 
-            # dashboard metadata columns (must exist in header)
-            row += [generated_at, filename]
+        if (srcIdx !== -1 && dstIdx !== -1) {
+          // Perform an exact Array Swap to guarantee locked buttons between them do not shift indices
+          const temp = activeOrder[srcIdx];
+          activeOrder[srcIdx] = activeOrder[dstIdx];
+          activeOrder[dstIdx] = temp;
+          
+          saveAllData();
+          buildLayouts();
+          renderGrid(); // Redraws with new swapped order
+        }
+      }
+      return false;
+    }
 
-            append_row_to_sheet(ws, row)
-            st.session_state.row_written = True
+    function handleDragEnd(e) {
+      this.classList.remove('dragging');
+      const cards = grid.querySelectorAll('.card');
+      cards.forEach(c => c.classList.remove('over'));
+    }
 
-        except Exception as e:
-            st.error("Could not save to Google Sheets (secrets / sheet setup may be missing or incomplete).")
-            st.exception(e)
-            st.stop()
+    function makeCard({ top, bottom, isMissing, dragId, isSpacer, onClick }){
+      const card = document.createElement("div");
+      card.className = "card";
+      card.dataset.dragId = dragId;
+      
+      const isLocked = lockedButtonsSet.has(dragId);
 
-        # Lock in dashboard state and present download
-        st.session_state.dashboard_generated = True
-        st.session_state.dashboard_filename = filename
-        st.session_state.dashboard_bytes = dashboard_bytes
+      // Only allow desktop dragging if not in tap-to-move mode AND button is not locked AND is admin
+      if (!isMoveMode && !isLocked && isAdmin) {
+        card.setAttribute('draggable', 'true'); 
+      }
 
-        st.success("Submitted. Download your dashboard below.")
-        st.download_button(
-            "Download your dashboard",
-            data=dashboard_bytes,
-            file_name=filename,
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        )
-        st.button("Start over", on_click=reset_all)
+      if (isLocked) {
+        card.classList.add('locked');
+      }
 
+      if (isMoveMode) {
+        if (dragId === moveSourceId) card.classList.add("moving-source");
+        else card.classList.add("moving-target");
+      }
 
-else:
-    st.session_state.step = 1
+      if (isSpacer) {
+          card.classList.add("spacer-card");
+      } else {
+          if (cardColors[dragId]) {
+            card.style.setProperty('--custom-bg', cardColors[dragId].bg);
+            card.style.setProperty('--custom-border', cardColors[dragId].border);
+            card.classList.add('has-custom-color');
+          }
+
+          if(currentMode === Mode.SONGS)    card.classList.add("songModeTint");
+          if(currentMode === Mode.GOAL)     card.classList.add("goalModeTint");
+          if(currentMode === Mode.PLAYLIST) card.classList.add("playlistModeTint");
+          if(isMissing) card.classList.add("missing");
+
+          const num = document.createElement("div");
+          num.className = "num";
+          num.textContent = top;
+
+          const name = document.createElement("div");
+          name.className = "name";
+          name.textContent = bottom;
+
+          card.appendChild(num);
+          card.appendChild(name);
+
+          const playOverlay = document.createElement("div");
+          playOverlay.className = "play-overlay";
+          playOverlay.innerHTML = `
+            <div class="progress-ring">
+              <div class="progress-ring-inner">
+                <div class="pause-bar"></div>
+                <div class="pause-bar"></div>
+              </div>
+            </div>
+          `;
+          card.appendChild(playOverlay);
+      }
+      
+      const lockIcon = document.createElement("div");
+      lockIcon.className = "lock-icon";
+      lockIcon.textContent = "🔒";
+      card.appendChild(lockIcon);
+
+      if (!isSpacer && activeTracks.has(card)) {
+          card.classList.add("playing");
+      }
+
+      let longPressTimer;
+      let longPressed = false;
+      let isFingerMoving = false; 
+      let startX = 0, startY = 0;
+
+      function startPress(e) {
+        if (!isAdmin) return; // Prevent action menu if not admin
+        if (e.type === 'mousedown' && e.button !== 0) return; 
+        isFingerMoving = false;
+        longPressed = false;
+        
+        if (e.touches && e.touches.length > 0) {
+          startX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
+        } else {
+          startX = e.clientX;
+          startY = e.clientY;
+        }
+
+        longPressTimer = setTimeout(() => {
+          longPressed = true;
+          if (!isFingerMoving) {
+            window.openActionMenu(dragId);
+            if (navigator.vibrate) navigator.vibrate(50);
+          }
+        }, 500); 
+      }
+
+      function movePress(e) {
+        let currentX = 0, currentY = 0;
+        if (e.touches && e.touches.length > 0) {
+          currentX = e.touches[0].clientX;
+          currentY = e.touches[0].clientY;
+        } else {
+          currentX = e.clientX;
+          currentY = e.clientY;
+        }
+
+        if (Math.abs(currentX - startX) > 10 || Math.abs(currentY - startY) > 10) {
+          isFingerMoving = true;
+          clearTimeout(longPressTimer);
+        }
+      }
+
+      function endPress(e) {
+        clearTimeout(longPressTimer);
+        setTimeout(() => { longPressed = false; }, 100);
+      }
+
+      card.addEventListener('touchstart', startPress, {passive: true});
+      card.addEventListener('touchmove', movePress, {passive: true});
+      card.addEventListener('touchend', endPress);
+      
+      card.addEventListener('mousedown', startPress);
+      card.addEventListener('mousemove', movePress);
+      card.addEventListener('mouseup', endPress);
+
+      card.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (isAdmin) window.openActionMenu(dragId);
+      });
+
+      card.addEventListener("click", () => {
+        if (isMoveMode) {
+          if (dragId === moveSourceId) {
+             isMoveMode = false;
+             moveSourceId = null;
+             setStatus("");
+             renderGrid();
+             return;
+          }
+
+          if (isLocked) {
+             setStatus("Cannot swap with a locked button.");
+             return;
+          }
+          
+          // Tap-to-Swap Logic! 
+          let activeOrder = currentMode === Mode.PLAYLIST ? playlistLayoutOrder : songsLayoutOrder;
+
+          const srcIdx = activeOrder.indexOf(moveSourceId);
+          const dstIdx = activeOrder.indexOf(dragId);
+
+          if (srcIdx !== -1 && dstIdx !== -1) {
+            // Perform an exact Array Swap to guarantee locked buttons between them do not shift indices
+            const temp = activeOrder[srcIdx];
+            activeOrder[srcIdx] = activeOrder[dstIdx];
+            activeOrder[dstIdx] = temp;
+            saveAllData();
+          }
+
+          isMoveMode = false;
+          moveSourceId = null;
+          setStatus("Button moved successfully!");
+          setTimeout(() => setStatus(""), 3000);
+          buildLayouts();
+          renderGrid();
+          return;
+        }
+
+        if (isSpacer) return; // Do nothing if it's just a blank block and not in move mode
+        if (isMenuRecent || longPressed) return;
+
+        flashButton(card);
+        
+        if (activeTracks.has(card)) {
+          stopTrackWithFade(card);
+          return;
+        }
+        
+        onClick(card);
+      });
+
+      card.addEventListener('dragstart', handleDragStart);
+      card.addEventListener('dragenter', handleDragEnter);
+      card.addEventListener('dragover',  handleDragOver);
+      card.addEventListener('dragleave', handleDragLeave);
+      card.addEventListener('drop',      handleDrop);
+      card.addEventListener('dragend',   handleDragEnd);
+
+      return card;
+    }
+
+    function renderGrid(){
+      grid.innerHTML = "";
+
+      if(currentMode === Mode.PLAYLIST){
+        grid.classList.add("playlist-grid");
+        for(const item of playlistLayout){
+          if (item._type === 'spacer') {
+             grid.appendChild(makeCard({ isSpacer: true, dragId: item._dragId, onClick: () => {} }));
+             continue;
+          }
+          
+          const src = `${AUDIO_BASE}/playlist/${encodeURIComponent(item.file)}`;
+          const label = item.artist ? `${item.title} — ${item.artist}` : item.title;
+          const displayTitle = item.title
+            .replace(/\s*\(Instrumental[^)]*\)/gi, '')
+            .replace(/\s*\[Instrumental[^\]]*\]/gi, '')
+            .replace(/\s*\(feat\.[^)]*\)/gi, '')
+            .trim();
+          const card = makeCard({
+            top: displayTitle,
+            bottom: item.artist,
+            isMissing: false,
+            dragId: item._dragId,
+            onClick: (el) => {
+              playAudio(src, label, el);
+            }
+          });
+          const numEl = card.querySelector('.num');
+          if(numEl){
+            if(displayTitle.length > 30)      numEl.style.fontSize = '11px';
+            else if(displayTitle.length > 18) numEl.style.fontSize = '13px';
+          }
+          grid.appendChild(card);
+        }
+      } else {
+        grid.classList.remove("playlist-grid");
+        for(const item of songsLayout){
+          if (item._type === 'spacer') {
+             grid.appendChild(makeCard({ isSpacer: true, dragId: item._dragId, onClick: () => {} }));
+             continue;
+          }
+          
+          let topText, bottomText, songSrc, goalSrc, label, isMissing = false;
+
+          if (item._type === 'player') {
+            songSrc = `${AUDIO_BASE}/songs/${item.songFile}`;
+            goalSrc = `${AUDIO_BASE}/goals/${item.goalFile}`;
+            label = `#${item.num} ${item.name}`;
+            isMissing = missingSongsSet.has(item.num);
+            topText = isMissing ? `-${item.num}-` : String(item.num);
+            bottomText = item.name;
+          } else {
+            songSrc = `${AUDIO_BASE}/songs/${item.songFile}`;
+            goalSrc = `${AUDIO_BASE}/goals/${item.goalFile}`;
+            label = item.labelBottom ? `${item.labelBottom}` : item.labelTop;
+            topText = item.labelTop;
+            bottomText = item.labelBottom || "";
+          }
+
+          const card = makeCard({
+            top: topText,
+            bottom: bottomText,
+            isMissing,
+            dragId: item._dragId,
+            onClick: (el) => {
+              if(currentMode === Mode.SONGS){
+                playAudio(songSrc, label, el);
+              } else {
+                playAudio(goalSrc, `GOAL: ${label}`, el);
+              }
+            }
+          });
+
+          grid.appendChild(card);
+        }
+      }
+
+      // Add the persistent "+" card at the end of the layout (Only visible in admin mode via CSS)
+      const addCard = document.createElement("div");
+      addCard.className = "card add-card admin-only";
+      addCard.innerHTML = `<div style="font-size:36px; color:#999; font-weight:100;">+</div>`;
+      addCard.onclick = () => {
+         if (isMoveMode) { setStatus("Cannot move a button here."); return; }
+         window.openEditModal(true);
+      };
+      grid.appendChild(addCard);
+    }
+
+    // Controls
+    if (songsTab) songsTab.addEventListener("click",    () => setMode(Mode.SONGS));
+    if (goalTab) goalTab.addEventListener("click",     () => setMode(Mode.GOAL));
+    if (playlistTab) playlistTab.addEventListener("click", () => setMode(Mode.PLAYLIST));
+    if (cacheBtn) cacheBtn.addEventListener("click",    () => syncOffline());
+
+    if (stopBtn) {
+      stopBtn.addEventListener("click", () => {
+        const originalText = stopBtn.textContent;
+        stopBtn.classList.add("stopping");
+        stopBtn.textContent = "Stopping…";
+        stopBtn.disabled = true;
+        setStatus("Stopping…");
+
+        stopAllWithFade();
+
+        const ms = Math.ceil(Math.max(0.5, FADE_TOTAL_SEC) * 1000) + 250;
+        setTimeout(() => {
+          stopBtn.classList.remove("stopping");
+          stopBtn.textContent = originalText;
+          stopBtn.disabled = false;
+        }, ms);
+      });
+    }
+
+    // Initial render
+    initColorPicker();
+    setMode(Mode.SONGS);
+  </script>
+</body>
+</html>
