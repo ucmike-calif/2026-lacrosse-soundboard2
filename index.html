@@ -545,7 +545,7 @@
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
     <button id="cacheBtn" class="ctlbtn" type="button" title="Download all audio to device for offline use">Offline Sync</button>
     
-    <button id="editBoardBtn" class="ctlbtn admin-hide" type="button" style="font-weight: bold; color: var(--purple);">Edit</button>
+    <button id="editBoardBtn" class="ctlbtn admin-hide" type="button" style="font-weight: bold; color: var(--purple);">⚙️ Edit Board</button>
     
     <button id="exportBtn" class="ctlbtn admin-only" type="button" onclick="showExportCode()">Export Code</button>
     <button id="lockAdminBtn" class="ctlbtn admin-only" type="button" style="background: var(--purple); color: white; border-color: rgba(0,0,0,0.1);">Lock</button>
@@ -647,12 +647,15 @@
   </div>
 
   <script>
-    // Try to register an external service worker for caching the HTML page itself.
+    // SERVICE WORKER KILL-SWITCH
+    // This actively hunts down and unregisters any stubbornly cached PWA/Service Workers
+    // that might be preventing your device from seeing the new HTML code!
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(e => {
-          console.log("No external Service Worker found. HTML requires initial network to load, but audio uses local Cache API.");
-        });
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for(let registration of registrations) {
+          registration.unregister();
+          console.log("Service Worker forcefully unregistered to clear cache.");
+        }
       });
     }
 
