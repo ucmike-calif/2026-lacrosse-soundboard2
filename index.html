@@ -604,6 +604,34 @@
       color: #999;
       line-height: 1;
     }
+
+    /* PIN Keypad Styles */
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .keypad-btn {
+      background: #f0f0f0;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 20px;
+      font-weight: bold;
+      color: #333;
+      cursor: pointer;
+      user-select: none;
+      touch-action: manipulation;
+    }
+    .keypad-btn:active {
+      background: #e0e0e0;
+      transform: scale(0.95);
+    }
+    .keypad-btn.clear-btn {
+      color: var(--red);
+      font-size: 16px;
+    }
   </style>
 </head>
 
@@ -717,7 +745,26 @@
     <div class="modal-content" style="max-width: 300px;">
       <h3 id="pinModalTitle" style="margin-top:0; font-size:20px;">Enter Admin PIN</h3>
       <p id="pinModalDesc" style="font-size:14px; color:#666; margin-top:-10px;">Enter PIN to unlock editing tools.</p>
-      <input type="password" id="adminPinInput" style="width: 100%; padding: 12px; font-size: 24px; text-align: center; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 20px; box-sizing: border-box; letter-spacing: 5px;" placeholder="••••" />
+      
+      <!-- Readonly input prevents device keyboard from opening -->
+      <input type="text" id="adminPinInput" readonly style="width: 100%; padding: 12px; font-size: 24px; text-align: center; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 16px; box-sizing: border-box; letter-spacing: 5px; background: #fafafa; outline: none;" placeholder="••••" />
+      
+      <!-- Numeric Keypad -->
+      <div class="keypad">
+        <button class="keypad-btn" onclick="appendPin('1')">1</button>
+        <button class="keypad-btn" onclick="appendPin('2')">2</button>
+        <button class="keypad-btn" onclick="appendPin('3')">3</button>
+        <button class="keypad-btn" onclick="appendPin('4')">4</button>
+        <button class="keypad-btn" onclick="appendPin('5')">5</button>
+        <button class="keypad-btn" onclick="appendPin('6')">6</button>
+        <button class="keypad-btn" onclick="appendPin('7')">7</button>
+        <button class="keypad-btn" onclick="appendPin('8')">8</button>
+        <button class="keypad-btn" onclick="appendPin('9')">9</button>
+        <button class="keypad-btn clear-btn" onclick="clearPin()">Clear</button>
+        <button class="keypad-btn" onclick="appendPin('0')">0</button>
+        <button class="keypad-btn clear-btn" onclick="deletePin()">&larr;</button>
+      </div>
+
       <div style="display: flex; gap: 10px;">
         <button class="ctlbtn" style="flex:1;" onclick="document.getElementById('pinModalOverlay').style.display='none'">Cancel</button>
         <button id="pinModalBtn" class="ctlbtn go" style="flex:1; background:var(--purple); border-color:var(--purple);" onclick="checkAdminPin()">Unlock</button>
@@ -1374,7 +1421,7 @@
       }
 
       document.getElementById('pinModalOverlay').style.display = 'flex';
-      setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
+      // No longer focusing the input since we want to use the custom keypad
     });
 
     document.getElementById('lockAdminBtn').addEventListener('click', () => {
@@ -1386,6 +1433,23 @@
       setStatus("Board is now locked. Counters reset.");
       renderGrid();
     });
+
+    // Keypad Functions
+    window.appendPin = function(digit) {
+      const input = document.getElementById('adminPinInput');
+      if (input.value.length < 4) {
+        input.value += digit;
+      }
+    }
+    
+    window.clearPin = function() {
+      document.getElementById('adminPinInput').value = "";
+    }
+    
+    window.deletePin = function() {
+      const input = document.getElementById('adminPinInput');
+      input.value = input.value.slice(0, -1);
+    }
 
     // Scrambles the PIN so the plaintext isn't stored in the code
     function encodePIN(pin) {
