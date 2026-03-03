@@ -55,11 +55,7 @@
       margin: 0 0 10px 0;
       font-size: 26px;
       line-height: 1.1;
-      cursor: pointer; /* Hints that it might be tappable */
       user-select: none;
-      /* Bypass iOS double-tap to zoom delay for instant tapping */
-      touch-action: manipulation; 
-      -webkit-tap-highlight-color: transparent;
     }
 
     .banner{
@@ -345,6 +341,7 @@
     .admin-only { display: none !important; }
     body.admin-mode .admin-only { display: inline-block !important; }
     body.admin-mode .card.add-card.admin-only { display: flex !important; }
+    body.admin-mode .admin-hide { display: none !important; }
 
     .card:not(.add-card):not(.spacer-card):active{ transform: scale(0.985); }
     .card.spacer-card:active{ transform: scale(0.985); }
@@ -547,8 +544,11 @@
     <button id="playlistTab" class="tabbtn" type="button"><span class="playlistText">Playlist</span></button>
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
     <button id="cacheBtn" class="ctlbtn" type="button" title="Download all audio to device for offline use">Offline Sync</button>
+    
+    <button id="editBoardBtn" class="ctlbtn admin-hide" type="button" style="font-weight: bold; color: var(--purple);">Edit</button>
+    
     <button id="exportBtn" class="ctlbtn admin-only" type="button" onclick="showExportCode()">Export Code</button>
-    <button id="lockAdminBtn" class="ctlbtn admin-only" type="button" style="background: var(--purple); color: white; border-color: rgba(0,0,0,0.1);">Lock Board</button>
+    <button id="lockAdminBtn" class="ctlbtn admin-only" type="button" style="background: var(--purple); color: white; border-color: rgba(0,0,0,0.1);">Lock</button>
   </div>
 
   <div id="status" class="status"></div>
@@ -850,39 +850,28 @@
     let moveSourceId = null;
 
     /*****************************************************************
-     * ADMIN UNLOCK LOGIC (3 Taps on Header)
+     * ADMIN UNLOCK LOGIC 
      *****************************************************************/
-    let titleTaps = 0;
-    let titleTapTimer;
     let failedPinAttempts = 0;
     
-    // Switch to 'pointerdown' instead of 'click' for immediate response,
-    // ignoring Safari's double-tap-to-zoom 300ms delays.
-    document.getElementById('mainTitle').addEventListener('pointerdown', () => {
+    document.getElementById('editBoardBtn').addEventListener('click', () => {
       if (isAdmin) return; // already unlocked
-      titleTaps++;
-      clearTimeout(titleTapTimer);
-      if (titleTaps >= 3) {
-        titleTaps = 0;
-        document.getElementById('adminPinInput').value = "";
-        
-        // Dynamically change text if PIN hasn't been set yet
-        if (!activeAdminPinHash) {
-          document.getElementById('pinModalTitle').textContent = "Create Admin PIN";
-          document.getElementById('pinModalDesc').textContent = "Create a 4-digit PIN to secure the board.";
-          document.getElementById('pinModalBtn').textContent = "Set PIN";
-        } else {
-          document.getElementById('pinModalTitle').textContent = "Enter Admin PIN";
-          document.getElementById('pinModalDesc').textContent = "Enter PIN to unlock editing tools.";
-          document.getElementById('pinModalBtn').textContent = "Unlock";
-        }
-
-        document.getElementById('pinModalOverlay').style.display = 'flex';
-        setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
+      
+      document.getElementById('adminPinInput').value = "";
+      
+      // Dynamically change text if PIN hasn't been set yet
+      if (!activeAdminPinHash) {
+        document.getElementById('pinModalTitle').textContent = "Create Admin PIN";
+        document.getElementById('pinModalDesc').textContent = "Create a 4-digit PIN to secure the board.";
+        document.getElementById('pinModalBtn').textContent = "Set PIN";
       } else {
-        // Increased timeout to 2 seconds to make tapping easier
-        titleTapTimer = setTimeout(() => { titleTaps = 0; }, 2000);
+        document.getElementById('pinModalTitle').textContent = "Enter Admin PIN";
+        document.getElementById('pinModalDesc').textContent = "Enter PIN to unlock editing tools.";
+        document.getElementById('pinModalBtn').textContent = "Unlock";
       }
+
+      document.getElementById('pinModalOverlay').style.display = 'flex';
+      setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
     });
 
     document.getElementById('lockAdminBtn').addEventListener('click', () => {
@@ -1802,7 +1791,7 @@
 
       card.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        window.openActionMenu(dragId);
+        if (isAdmin) window.openActionMenu(dragId);
       });
 
       card.addEventListener("click", () => {
