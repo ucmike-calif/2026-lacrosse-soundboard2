@@ -55,6 +55,8 @@
       margin: 0 0 10px 0;
       font-size: 26px;
       line-height: 1.1;
+      cursor: pointer; /* Hints that it might be tappable */
+      user-select: none;
     }
 
     .banner{
@@ -336,6 +338,11 @@
       font-weight: 500;
     }
 
+    /* Admin Mode Classes */
+    .admin-only { display: none !important; }
+    body.admin-mode .admin-only { display: inline-block !important; }
+    body.admin-mode .card.add-card.admin-only { display: flex !important; }
+
     .card:not(.add-card):not(.spacer-card):active{ transform: scale(0.985); }
     .card.spacer-card:active{ transform: scale(0.985); }
 
@@ -527,7 +534,7 @@
 
 <body>
   <header>
-    <h1>Lacrosse Soundboard</h1>
+    <h1 id="mainTitle">Lacrosse Soundboard</h1>
     <div id="modeBanner" class="banner song">SONG MODE</div>
   </header>
 
@@ -537,7 +544,8 @@
     <button id="playlistTab" class="tabbtn" type="button"><span class="playlistText">Playlist</span></button>
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
     <button id="cacheBtn" class="ctlbtn" type="button" title="Download all audio to device for offline use">Offline Sync</button>
-    <button id="exportBtn" class="ctlbtn" type="button" onclick="showExportCode()">Export Code</button>
+    <button id="exportBtn" class="ctlbtn admin-only" type="button" onclick="showExportCode()">Export Code</button>
+    <button id="lockAdminBtn" class="ctlbtn admin-only" type="button" style="background: var(--purple); color: white; border-color: rgba(0,0,0,0.1);">Lock Board</button>
   </div>
 
   <div id="status" class="status"></div>
@@ -613,6 +621,19 @@
     </div>
   </div>
 
+  <!-- PIN Unlock Modal -->
+  <div id="pinModalOverlay" class="modal-overlay">
+    <div class="modal-content" style="max-width: 300px;">
+      <h3 id="pinModalTitle" style="margin-top:0; font-size:20px;">Enter Admin PIN</h3>
+      <p id="pinModalDesc" style="font-size:14px; color:#666; margin-top:-10px;">Enter PIN to unlock editing tools.</p>
+      <input type="password" id="adminPinInput" style="width: 100%; padding: 12px; font-size: 24px; text-align: center; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 20px; box-sizing: border-box; letter-spacing: 5px;" placeholder="••••" />
+      <div style="display: flex; gap: 10px;">
+        <button class="ctlbtn" style="flex:1;" onclick="document.getElementById('pinModalOverlay').style.display='none'">Cancel</button>
+        <button id="pinModalBtn" class="ctlbtn go" style="flex:1; background:var(--purple); border-color:var(--purple);" onclick="checkAdminPin()">Unlock</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Missing Audio Error Modal -->
   <div id="errorModalOverlay" class="modal-overlay">
     <div class="modal-content" style="max-width: 450px;">
@@ -636,403 +657,91 @@
      * DEFAULT APP DATA (Replace this section when exporting!)
      *****************************************************************/
     const AUDIO_BASE = "audio"; // repo path: /audio/...
-
+    
     const FADE_TOTAL_SEC = 4.0; 
     const FADE_HOLD_SEC  = 1.0; 
 
     // Default missing items
- const defaultMissingSongs = [2,4,5,7,8,10,12,13,15,25,30];
-const defaultLockedButtons = ["playlist_2","playlist_7","playlist_14","playlist_19","pl_Bonanza_U","pl_The_Good__The_Bad_and_The_Ugly_Theme_U","pl_Happy_Trails_Roy_Rogers","pl_Wild_Horses_The_Sundays"];
-const defaultCardColors = {
-  "playlist_2": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "playlist_7": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "playlist_14": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "playlist_19": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "pl_Bonanza_U": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "pl_The_Good__The_Bad_and_The_Ugly_Theme_U": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "pl_Happy_Trails_Roy_Rogers": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "pl_Wild_Horses_The_Sundays": {
-    "bg": "#ffebee",
-    "border": "#ef9a9a"
-  },
-  "pl_TBD_U": {
-    "bg": "#f5f5f5",
-    "border": "#e0e0e0"
-  }
-};
-const defaultSongsLayoutOrder = [
-  "player_1",
-  "player_2",
-  "player_3",
-  "player_4",
-  "player_5",
-  "player_6",
-  "player_7",
-  "player_8",
-  "player_9",
-  "player_10",
-  "player_11",
-  "player_12",
-  "player_13",
-  "player_15",
-  "player_18",
-  "player_20",
-  "player_25",
-  "player_27",
-  "player_30",
-  "player_31",
-  "extra_Anthem",
-  "extra_TBD 1",
-  "extra_TBD 2",
-  "extra_TBD 3"
-];
-const defaultPlaylistLayoutOrder = [
-  "pl_Hells_Bells__Instrumental__AC_DC",
-  "pl_Sabotage__Instrumental__Beastie_Boys",
-  "pl_Ain_t_Talkin___Bout_Love__Instrumental__Van_Halen",
-  "pl_Enter_Sandman_Metallica",
-  "pl_TBD_U",
-  "pl_Bonanza_U",
-  "pl_HEY__Gary_Glitter",
-  "pl_Y_all_Ready_for_This__Space_Jam_Theme__U",
-  "pl_Gonna_Make_You_Sweat_C_C_Music_Factory",
-  "pl_Right_Here__Right_Now_Fatboy_Slim",
-  "pl_Still_D_R_E___Instrumental__Dr__Dre",
-  "pl_The_Good__The_Bad_and_The_Ugly_Theme_U",
-  "pl_Situation_Yaz",
-  "pl_How_Soon_Is_Now__The_Smiths",
-  "pl_Rocket_Fuel_ft__De_La_Soul_DJ_Shadow",
-  "pl_Yankee_and_the_Brave__Instrumental__Run_The_Jewels",
-  "pl_Blockbuster_Night_Part_1__Instrumental__Run_The_Jewels",
-  "pl_Happy_Trails_Roy_Rogers",
-  "pl_The_Dark_Knight_Main_Theme_Hans_Zimmer",
-  "pl_Terminator_2_Theme_U",
-  "pl_Misirlou__Pulp_Fiction__Dick_Dale",
-  "pl_Kill_Bill_Theme_U",
-  "pl_It_Takes_Two_Rob_Base___D_J__E_Z_Rock",
-  "pl_Wild_Horses_The_Sundays",
-  "pl_Jump_into_the_Fire__Karaoke__Harry_Nilsson",
-  "pl_Jeopardy_Theme_Song_U",
-  "pl_Call_Ticketron__Instrumental__Run_The_Jewels"
-];
-const defaultSpacersSongs = [];
-const defaultSpacersPlaylist = [];
+    const defaultAdminPinHash = ""; // Empty by default so you can set it!
+    const defaultMissingSongs = [2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30];
+    const defaultLockedButtons = [];
+    const defaultCardColors = {};
+    const defaultSongsLayoutOrder = [];
+    const defaultPlaylistLayoutOrder = [];
+    const defaultSpacersSongs = [];
+    const defaultSpacersPlaylist = [];
 
-const defaultPlayers = [
-  {
-    "num": 1,
-    "name": "Roshan Royai",
-    "songFile": "01_Roshan_Royai.mp3",
-    "goalFile": "01_Roshan_Royai_Goal.mp3"
-  },
-  {
-    "num": 2,
-    "name": "Hayden Nicholas",
-    "songFile": "02_Hayden_Nicholas.mp3",
-    "goalFile": "02_Hayden_Nicholas_Goal.mp3"
-  },
-  {
-    "num": 3,
-    "name": "Corinne Negrete",
-    "songFile": "03_Corinne_Negrete.mp3",
-    "goalFile": "03_Corinne_Negrete_Goal.mp3"
-  },
-  {
-    "num": 4,
-    "name": "Ava Thompson",
-    "songFile": "04_Ava_Thompson.mp3",
-    "goalFile": "04_Ava_Thompson_Goal.mp3"
-  },
-  {
-    "num": 5,
-    "name": "Ceili Dwyer",
-    "songFile": "05_Ceili_Dwyer.mp3",
-    "goalFile": "05_Ceili_Dwyer_Goal.mp3"
-  },
-  {
-    "num": 6,
-    "name": "Ava Ahern",
-    "songFile": "06_Ava_Ahern.mp3",
-    "goalFile": "06_Ava_Ahern_Goal.mp3"
-  },
-  {
-    "num": 7,
-    "name": "Hazel Toombs",
-    "songFile": "07_Hazel_Toombs.mp3",
-    "goalFile": "07_Hazel_Toombs_Goal.mp3"
-  },
-  {
-    "num": 8,
-    "name": "Beatriz Mark-Constantino",
-    "songFile": "08_Beatriz_Mark-Constantino.mp3",
-    "goalFile": "08_Beatriz_Mark-Constantino_Goal.mp3"
-  },
-  {
-    "num": 9,
-    "name": "Sophia Sanchez",
-    "songFile": "09_Sophia_Sanchez.mp3",
-    "goalFile": "09_Sophia_Sanchez_Goal.mp3"
-  },
-  {
-    "num": 10,
-    "name": "Calyn Foley",
-    "songFile": "10_Calyn_Foley.mp3",
-    "goalFile": "10_Calyn_Foley_Goal.mp3"
-  },
-  {
-    "num": 11,
-    "name": "Marisa Knight",
-    "songFile": "11_Marisa_Knight.mp3",
-    "goalFile": "11_Marisa_Knight_Goal.mp3"
-  },
-  {
-    "num": 12,
-    "name": "Samina Mcleod",
-    "songFile": "12_Samina_Mcleod.mp3",
-    "goalFile": "12_Samina_Mcleod_Goal.mp3"
-  },
-  {
-    "num": 13,
-    "name": "Molly Cotton",
-    "songFile": "13_Molly_Cotton.mp3",
-    "goalFile": "13_Molly_Cotton_Goal.mp3"
-  },
-  {
-    "num": 15,
-    "name": "Sophia Rizzo",
-    "songFile": "15_Sophia_Rizzo.mp3",
-    "goalFile": "15_Sophia_Rizzo_Goal.mp3"
-  },
-  {
-    "num": 18,
-    "name": "Danika Reginato",
-    "songFile": "18_Danika_Reginato.mp3",
-    "goalFile": "18_Danika_Reginato_Goal.mp3"
-  },
-  {
-    "num": 20,
-    "name": "Ava Keane",
-    "songFile": "20_Ava_Keane.mp3",
-    "goalFile": "20_Ava_Keane_Goal.mp3"
-  },
-  {
-    "num": 25,
-    "name": "Isabella Watson",
-    "songFile": "25_Isabella_Watson.mp3",
-    "goalFile": "25_Isabella_Watson_Goal.mp3"
-  },
-  {
-    "num": 27,
-    "name": "Amanda Reed",
-    "songFile": "27_Amanda_Reed.mp3",
-    "goalFile": "27_Amanda_Reed_Goal.mp3"
-  },
-  {
-    "num": 30,
-    "name": "Claire Junge",
-    "songFile": "30_Claire_Junge.mp3",
-    "goalFile": "30_Claire_Junge_Goal.mp3"
-  },
-  {
-    "num": 31,
-    "name": "Ava Reed",
-    "songFile": "31_Ava_Reed.mp3",
-    "goalFile": "31_Ava_Reed_Goal.mp3"
-  }
-];
+    const defaultPlayers = [
+      { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
+      { num: 2,  name: "Hayden Nicholas",             songFile: "02_Hayden_Nicholas.mp3",              goalFile: "02_Hayden_Nicholas_Goal.mp3" },
+      { num: 3,  name: "Corinne Negrete",             songFile: "03_Corinne_Negrete.mp3",              goalFile: "03_Corinne_Negrete_Goal.mp3" },
+      { num: 4,  name: "Ava Thompson",                songFile: "04_Ava_Thompson.mp3",                 goalFile: "04_Ava_Thompson_Goal.mp3" },
+      { num: 5,  name: "Ceili Dwyer",                 songFile: "05_Ceili_Dwyer.mp3",                  goalFile: "05_Ceili_Dwyer_Goal.mp3" },
+      { num: 6,  name: "Ava Ahern",                   songFile: "06_Ava_Ahern.mp3",                    goalFile: "06_Ava_Ahern_Goal.mp3" },
+      { num: 7,  name: "Hazel Toombs",                songFile: "07_Hazel_Toombs.mp3",                 goalFile: "07_Hazel_Toombs_Goal.mp3" },
+      { num: 8,  name: "Beatriz Mark-Constantino",    songFile: "08_Beatriz_Mark-Constantino.mp3",     goalFile: "08_Beatriz_Mark-Constantino_Goal.mp3" },
+      { num: 9,  name: "Sophia Sanchez",              songFile: "09_Sophia_Sanchez.mp3",               goalFile: "09_Sophia_Sanchez_Goal.mp3" },
+      { num: 10, name: "Calyn Foley",                 songFile: "10_Calyn_Foley.mp3",                  goalFile: "10_Calyn_Foley_Goal.mp3" },
+      { num: 11, name: "Marisa Knight",               songFile: "11_Marisa_Knight.mp3",                goalFile: "11_Marisa_Knight_Goal.mp3" },
+      { num: 12, name: "Samina Mcleod",               songFile: "12_Samina_Mcleod.mp3",                goalFile: "12_Samina_Mcleod_Goal.mp3" },
+      { num: 13, name: "Molly Cotton",                songFile: "13_Molly_Cotton.mp3",                 goalFile: "13_Molly_Cotton_Goal.mp3" },
+      { num: 15, name: "Sophia Rizzo",                songFile: "15_Sophia_Rizzo.mp3",                 goalFile: "15_Sophia_Rizzo_Goal.mp3" },
+      { num: 18, name: "Danika Reginato",             songFile: "18_Danika_Reginato.mp3",              goalFile: "18_Danika_Reginato_Goal.mp3" },
+      { num: 20, name: "Ava Keane",                   songFile: "20_Ava_Keane.mp3",                    goalFile: "20_Ava_Keane_Goal.mp3" },
+      { num: 25, name: "Isabella Watson",             songFile: "25_Isabella_Watson.mp3",              goalFile: "25_Isabella_Watson_Goal.mp3" },
+      { num: 27, name: "Amanda Reed",                 songFile: "27_Amanda_Reed.mp3",                  goalFile: "27_Amanda_Reed_Goal.mp3" },
+      { num: 30, name: "Claire Junge",                songFile: "30_Claire_Junge.mp3",                 goalFile: "30_Claire_Junge_Goal.mp3" },
+      { num: 31, name: "Ava Reed",                    songFile: "31_Ava_Reed.mp3",                     goalFile: "31_Ava_Reed_Goal.mp3" },
+    ];
 
-const defaultExtras = [
-  {
-    "key": "Anthem",
-    "labelTop": "Anthem",
-    "labelBottom": "National Anthem",
-    "songFile": "extras/Anthem.mp3",
-    "goalFile": "extras/Anthem_Goal.mp3"
-  },
-  {
-    "key": "TBD 1",
-    "labelTop": "Oh Yeah",
-    "labelBottom": "After Nat'l Anthem",
-    "songFile": "extras/TBD_1.mp3",
-    "goalFile": "extras/TBD_1_Goal.mp3"
-  },
-  {
-    "key": "TBD 2",
-    "labelTop": "Neigh-Gallop",
-    "labelBottom": "Post-Goal",
-    "songFile": "extras/TBD_2.mp3",
-    "goalFile": "extras/TBD_2_Goal.mp3"
-  },
-  {
-    "key": "TBD 3",
-    "labelTop": "Mustang Sally",
-    "labelBottom": "After a Win",
-    "songFile": "extras/TBD_3.mp3",
-    "goalFile": "extras/TBD_3_Goal.mp3"
-  }
-];
+    const defaultExtras = [
+      { key: "Anthem", labelTop: "Anthem", labelBottom: "National Anthem", songFile: "extras/Anthem.mp3", goalFile: "extras/Anthem_Goal.mp3" },
+      { key: "TBD 1", labelTop: "Oh Yeah", labelBottom: "After Nat'l Anthem", songFile: "extras/TBD_1.mp3", goalFile: "extras/TBD_1_Goal.mp3" },
+      { key: "TBD 2", labelTop: "Neigh-Gallop", labelBottom: "Post-Goal", songFile: "extras/TBD_2.mp3", goalFile: "extras/TBD_2_Goal.mp3" },
+      { key: "TBD 3", labelTop: "Mustang Sally", labelBottom: "After a Win", songFile: "extras/TBD_3.mp3", goalFile: "extras/TBD_3_Goal.mp3" },
+    ];
 
-const defaultPlaylist = [
-  {
-    "title": "Hells Bells (Instrumental)",
-    "artist": "AC/DC",
-    "file": "ACDC - Hells Bells (Instrumental).mp3"
-  },
-  {
-    "title": "Sabotage (Instrumental)",
-    "artist": "Beastie Boys",
-    "file": "Beastie Boys-Sabotage ( Instrumental ).mp3"
-  },
-  {
-    "title": "Bonanza",
-    "artist": "",
-    "file": "Bonanza.mp3"
-  },
-  {
-    "title": "Gonna Make You Sweat",
-    "artist": "C+C Music Factory",
-    "file": "C&C MF - Gonna Make You Sweat.mp3"
-  },
-  {
-    "title": "Rocket Fuel ft. De La Soul",
-    "artist": "DJ Shadow",
-    "file": "DJ Shadow - Rocket Fuel ft. De La Soul.mp3"
-  },
-  {
-    "title": "Right Here, Right Now",
-    "artist": "Fatboy Slim",
-    "file": "Fatboy Slim - Right Here, Right Now.mp3"
-  },
-  {
-    "title": "HEY!",
-    "artist": "Gary Glitter",
-    "file": "Gary Glitter - HEY!.mp3"
-  },
-  {
-    "title": "The Good, The Bad and The Ugly Theme",
-    "artist": "",
-    "file": "Good Bad Ugly Theme.mp3"
-  },
-  {
-    "title": "Jump into the Fire (Karaoke)",
-    "artist": "Harry Nilsson",
-    "file": "Harry Nilsson  - Jump into the Fire (karaoke).mp3"
-  },
-  {
-    "title": "Jeopardy Theme Song",
-    "artist": "",
-    "file": "Jeopardy Theme Song.mp3"
-  },
-  {
-    "title": "Kill Bill Theme",
-    "artist": "",
-    "file": "Kill Bill Theme.mp3"
-  },
-  {
-    "title": "Enter Sandman",
-    "artist": "Metallica",
-    "file": "Metallica - Enter Sandman.mp3"
-  },
-  {
-    "title": "Misirlou (Pulp Fiction)",
-    "artist": "Dick Dale",
-    "file": "Pulp Fiction - Misirlou.mp3"
-  },
-  {
-    "title": "It Takes Two",
-    "artist": "Rob Base & D.J. E-Z Rock",
-    "file": "Rob Base & D.J. E-Z Rock - It Takes Two.mp3"
-  },
-  {
-    "title": "Happy Trails",
-    "artist": "Roy Rogers",
-    "file": "Roy Rogers -  Happy trails.mp3"
-  },
-  {
-    "title": "Yankee and the Brave (Instrumental)",
-    "artist": "Run The Jewels",
-    "file": "RTJ - yankee and the brave (ep. 4) (Instrumental).mp3"
-  },
-  {
-    "title": "Blockbuster Night Part 1 (Instrumental)",
-    "artist": "Run The Jewels",
-    "file": "Run The Jewels - Blockbuster Night Part 1 (Instrumental).mp3"
-  },
-  {
-    "title": "Call Ticketron (Instrumental)",
-    "artist": "Run The Jewels",
-    "file": "Run The Jewels - Call Ticketron (Instrumental)  RTJ3.mp3"
-  },
-  {
-    "title": "Still D.R.E. (Instrumental)",
-    "artist": "Dr. Dre",
-    "file": "Still D.R.E. (Instrumental).mp3"
-  },
-  {
-    "title": "Wild Horses",
-    "artist": "The Sundays",
-    "file": "Sundays - Wild Horses.mp4"
-  },
-  {
-    "title": "Terminator 2 Theme",
-    "artist": "",
-    "file": "Terminator 2 Theme.mp3"
-  },
-  {
-    "title": "The Dark Knight Main Theme",
-    "artist": "Hans Zimmer",
-    "file": "The Dark Knight Main Theme - Hans Zimmer.mp3"
-  },
-  {
-    "title": "How Soon Is Now?",
-    "artist": "The Smiths",
-    "file": "The Smiths - How Soon Is Now.mp3"
-  },
-  {
-    "title": "Ain't Talkin' 'Bout Love (Instrumental)",
-    "artist": "Van Halen",
-    "file": "Van Halen - Ain't Talkin' 'Bout Love (Instrumental).mp3"
-  },
-  {
-    "title": "Y'all Ready for This (Space Jam Theme)",
-    "artist": "",
-    "file": "Y'all ready for this - (Space Jam Theme).mp3"
-  },
-  {
-    "title": "Situation",
-    "artist": "Yaz",
-    "file": "Yaz - Situation.mp3"
-  },
-  {
-    "title": "TBD",
-    "artist": "",
-    "file": "TBD.mp3"
-  }
-];
+    const defaultPlaylist = [
+      { title: "Hells Bells (Instrumental)",                 artist: "AC/DC",                                    file: "ACDC - Hells Bells (Instrumental).mp3" },
+      { title: "Banana Clipper (Instrumental)",              artist: "Run The Jewels",                           file: "Banana Clipper Instrumental.mp3" },
+      { title: "Sabotage (Instrumental)",                    artist: "Beastie Boys",                             file: "Beastie Boys-Sabotage ( Instrumental ).mp3" },
+      { title: "Bonanza",                                    artist: "",                                         file: "Bonanza.mp3" },
+      { title: "Gonna Make You Sweat",                       artist: "C+C Music Factory",                        file: "C&C MF - Gonna Make You Sweat.mp3" },
+      { title: "Nobody Speak (Instrumental)",                artist: "DJ Shadow",                                file: "DJ Shadow - Nobody Speak (Instrumental).mp3" },
+      { title: "Rocket Fuel ft. De La Soul",                 artist: "DJ Shadow",                                file: "DJ Shadow - Rocket Fuel ft. De La Soul.mp3" },
+      { title: "Right Here, Right Now",                      artist: "Fatboy Slim",                              file: "Fatboy Slim - Right Here, Right Now.mp3" },
+      { title: "Rock And Roll Pt. 2 (Instrumental)",         artist: "Gary Glitter",                             file: "Gary Glitter - Rock And Roll (Pt. 2) (Instrumental Version).mp3" },
+      { title: "The Good, The Bad and The Ugly Theme",       artist: "",                                         file: "Good Bad Ugly Theme.mp3" },
+      { title: "Jump into the Fire (Karaoke)",               artist: "Harry Nilsson",                            file: "Harry Nilsson  - Jump into the Fire (karaoke).mp3" },
+      { title: "Jeopardy Theme Song",                        artist: "",                                         file: "Jeopardy Theme Song.mp3" },
+      { title: "Kill Bill Theme",                            artist: "",                                         file: "Kill Bill Theme.mp3" },
+      { title: "Angel (Instrumental)",                       artist: "Massive Attack",                           file: "Massive Attack - Angel (Instrumental Original).mp3" },
+      { title: "Enter Sandman",                              artist: "Metallica",                                file: "Metallica - Enter Sandman.mp3" },
+      { title: "Misirlou (Pulp Fiction)",                    artist: "Dick Dale",                                file: "Pulp Fiction - Misirlou.mp3" },
+      { title: "It Takes Two",                               artist: "Rob Base & D.J. E-Z Rock",                 file: "Rob Base & D.J. E-Z Rock - It Takes Two.mp3" },
+      { title: "Happy Trails",                               artist: "Roy Rogers",                               file: "Roy Rogers -  Happy trails.mp3" },
+      { title: "Jeopardy (Instrumental)",                    artist: "Run The Jewels",                           file: "RTJ - Jeopardy (Instrumental).mp3" },
+      { title: "Yankee and the Brave (Instrumental)",        artist: "Run The Jewels",                           file: "RTJ - yankee and the brave (ep. 4) (Instrumental).mp3" },
+      { title: "Blockbuster Night Part 1 (Instrumental)",    artist: "Run The Jewels",                           file: "Run The Jewels - Blockbuster Night Part 1 (Instrumental).mp3" },
+      { title: "Call Ticketron (Instrumental)",              artist: "Run The Jewels",                           file: "Run The Jewels - Call Ticketron (Instrumental)  RTJ3.mp3" },
+      { title: "Close Your Eyes (Instrumental)",             artist: "Run The Jewels",                           file: "Run The Jewels - Close Your Eyes (And Count to Fuck) [Instrumental].mp3" },
+      { title: "JU$T (Instrumental)",                        artist: "Run The Jewels ft. Pharrell & Zack de la Rocha", file: "Run The Jewels - JU$T (Instrumental) (feat. Pharrell Williams & Zack de la Rocha).mp3" },
+      { title: "Out of Sight (Instrumental)",                artist: "Run The Jewels ft. 2 Chainz",              file: "Run The Jewels - out of sight (Instrumental) (feat. 2 Chainz).mp3" },
+      { title: "Still D.R.E. (Instrumental)",                artist: "Dr. Dre",                                  file: "Still D.R.E. (Instrumental).mp3" },
+      { title: "Wild Horses",                                artist: "The Sundays",                              file: "Sundays - Wild Horses.mp4" },
+      { title: "Terminator 2 Theme",                         artist: "",                                         file: "Terminator 2 Theme.mp3" },
+      { title: "Hells Bells (Just the Bells)",               artist: "AC/DC",                                    file: "The Bell of Hells Bells (Just the Bells) ACDC Hells Bells bell only.mp3" },
+      { title: "The Dark Knight Main Theme",                 artist: "Hans Zimmer",                              file: "The Dark Knight Main Theme - Hans Zimmer.mp3" },
+      { title: "How Soon Is Now?",                           artist: "The Smiths",                               file: "The Smiths - How Soon Is Now.mp3" },
+      { title: "Ain't Talkin' 'Bout Love (Instrumental)",    artist: "Van Halen",                                file: "Van Halen - Ain't Talkin' 'Bout Love (Instrumental).mp3" },
+      { title: "Y'all Ready for This (Space Jam Theme)",     artist: "",                                         file: "Y'all ready for this - (Space Jam Theme).mp3" },
+      { title: "Situation",                                  artist: "Yaz",                                      file: "Yaz - Situation.mp3" },
+    ];
+
     /*****************************************************************
      * DYNAMIC DATA MANAGEMENT (Local Storage Merging)
      *****************************************************************/
+    let activeAdminPinHash = localStorage.getItem('lax-admin-pin') || defaultAdminPinHash;
     let activePlayers = JSON.parse(localStorage.getItem('lax-players')) || defaultPlayers;
     let activeExtras = JSON.parse(localStorage.getItem('lax-extras')) || defaultExtras;
     let activePlaylist = JSON.parse(localStorage.getItem('lax-playlist')) || defaultPlaylist;
@@ -1046,6 +755,7 @@ const defaultPlaylist = [
     let activeSpacersPlaylist = JSON.parse(localStorage.getItem('lax-spacers-playlist')) || defaultSpacersPlaylist;
 
     function saveAllData() {
+      localStorage.setItem('lax-admin-pin', activeAdminPinHash);
       localStorage.setItem('lax-players', JSON.stringify(activePlayers));
       localStorage.setItem('lax-extras', JSON.stringify(activeExtras));
       localStorage.setItem('lax-playlist', JSON.stringify(activePlaylist));
@@ -1097,6 +807,7 @@ const defaultPlaylist = [
 
     const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal", PLAYLIST: "playlist" });
     let currentMode = Mode.SONGS;
+    let isAdmin = false;
 
     // Track all actively playing tracks
     const activeTracks = new Map(); // cardEl -> { audio, gainNode, mediaNode, fadeTimer }
@@ -1134,6 +845,88 @@ const defaultPlaylist = [
     let isMenuRecent = false; 
     let isMoveMode = false;
     let moveSourceId = null;
+
+    /*****************************************************************
+     * ADMIN UNLOCK LOGIC (3 Taps on Header)
+     *****************************************************************/
+    let titleTaps = 0;
+    let titleTapTimer;
+    let failedPinAttempts = 0;
+    
+    document.getElementById('mainTitle').addEventListener('click', () => {
+      if (isAdmin) return; // already unlocked
+      titleTaps++;
+      clearTimeout(titleTapTimer);
+      if (titleTaps >= 3) {
+        titleTaps = 0;
+        document.getElementById('adminPinInput').value = "";
+        
+        // Dynamically change text if PIN hasn't been set yet
+        if (!activeAdminPinHash) {
+          document.getElementById('pinModalTitle').textContent = "Create Admin PIN";
+          document.getElementById('pinModalDesc').textContent = "Create a 4-digit PIN to secure the board.";
+          document.getElementById('pinModalBtn').textContent = "Set PIN";
+        } else {
+          document.getElementById('pinModalTitle').textContent = "Enter Admin PIN";
+          document.getElementById('pinModalDesc').textContent = "Enter PIN to unlock editing tools.";
+          document.getElementById('pinModalBtn').textContent = "Unlock";
+        }
+
+        document.getElementById('pinModalOverlay').style.display = 'flex';
+        setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
+      } else {
+        titleTapTimer = setTimeout(() => { titleTaps = 0; }, 800);
+      }
+    });
+
+    document.getElementById('lockAdminBtn').addEventListener('click', () => {
+      isAdmin = false;
+      document.body.classList.remove('admin-mode');
+      isMoveMode = false;
+      moveSourceId = null;
+      setStatus("Board is now locked.");
+      renderGrid();
+    });
+
+    // Scrambles the PIN so the plaintext isn't stored in the code
+    function encodePIN(pin) {
+      return btoa(pin + "_lax2026"); 
+    }
+
+    window.checkAdminPin = function() {
+      const input = document.getElementById('adminPinInput').value;
+      if (!input) return;
+
+      if (!activeAdminPinHash) {
+        // Setting a new PIN for the first time
+        activeAdminPinHash = encodePIN(input);
+        saveAllData();
+        isAdmin = true;
+        document.body.classList.add('admin-mode');
+        document.getElementById('pinModalOverlay').style.display = 'none';
+        setStatus("PIN Set! Be sure to use 'Export Code' to save this permanently.");
+        renderGrid();
+      } else {
+        // Checking against existing PIN hash
+        if (encodePIN(input) === activeAdminPinHash) {
+          failedPinAttempts = 0; // reset on success
+          isAdmin = true;
+          document.body.classList.add('admin-mode');
+          document.getElementById('pinModalOverlay').style.display = 'none';
+          setStatus("Admin Mode Unlocked!");
+          renderGrid();
+        } else {
+          failedPinAttempts++;
+          if (failedPinAttempts >= 3) {
+            alert('Incorrect PIN.\n\nIf you forgot your PIN, go into GitHub, edit the index.html file to change defaultAdminPinHash back to "", commit the change, and refresh the app to create a new one.');
+          } else {
+            alert("Incorrect PIN.");
+          }
+          document.getElementById('adminPinInput').value = "";
+        }
+      }
+    }
+
 
     let isEditModeNew = false;
     let editingItemType = null; // 'player', 'extra', 'playlist'
@@ -1209,286 +1002,10 @@ const defaultPlaylist = [
       }
     }
 
-    window.closeColorPicker = function() {
-      document.getElementById('colorPickerOverlay').style.display = 'none';
-      activeActionId = null;
-    }
-
-    function selectColor(bg, border) {
-      if (!activeActionId) return;
-      if (bg === null) {
-        delete cardColors[activeActionId];
-      } else {
-        cardColors[activeActionId] = { bg, border };
-      }
-      saveAllData();
-      renderGrid(); 
-      window.closeColorPicker();
-    }
-
-    /*****************************************************************
-     * ADD/EDIT BUTTON LOGIC
-     *****************************************************************/
-    function deleteButton(dragId) {
-      const isSpacer = dragId.startsWith('spacer_');
-      
-      if (isSpacer) {
-          activeSpacersSongs = activeSpacersSongs.filter(id => id !== dragId);
-          activeSpacersPlaylist = activeSpacersPlaylist.filter(id => id !== dragId);
-      } else {
-          // Replace deleted button with a Spacer so locked layout positions DO NOT shift!
-          const newSpacerId = 'spacer_' + Date.now();
-          
-          if (currentMode === Mode.PLAYLIST) {
-              activeSpacersPlaylist.push(newSpacerId);
-              const idx = playlistLayoutOrder.indexOf(dragId);
-              if (idx > -1) playlistLayoutOrder[idx] = newSpacerId;
-          } else {
-              activeSpacersSongs.push(newSpacerId);
-              const idx = songsLayoutOrder.indexOf(dragId);
-              if (idx > -1) songsLayoutOrder[idx] = newSpacerId;
-          }
-
-          if (dragId.startsWith('player_')) {
-            const num = Number(dragId.replace('player_', ''));
-            activePlayers = activePlayers.filter(p => p.num !== num);
-            missingSongsSet.delete(num);
-          } else if (dragId.startsWith('extra_')) {
-            const key = dragId.replace('extra_', '');
-            activeExtras = activeExtras.filter(e => e.key !== key);
-          } else if (dragId.startsWith('pl_')) {
-            const itemToRemove = playlistLayout.find(p => p._dragId === dragId);
-            if(itemToRemove) {
-              activePlaylist = activePlaylist.filter(p => p.title !== itemToRemove.title || p.artist !== itemToRemove.artist);
-            }
-          }
-      }
-      
-      delete cardColors[dragId];
-      lockedButtonsSet.delete(dragId);
-      
-      saveAllData();
-      buildLayouts();
-      renderGrid();
-    }
-
-    function getPredictedFileNames(topText, bottomText, type) {
-      if (type === 'player') {
-        const num = Number(topText);
-        if (isNaN(num)) return { song: "INVALID_NUMBER.mp3", goal: "INVALID_NUMBER_Goal.mp3" };
-        const numStr = String(num).padStart(2, '0');
-        const nameSafe = String(bottomText).trim().replace(/\s+/g, '_');
-        return { song: `${numStr}_${nameSafe}.mp3`, goal: `${numStr}_${nameSafe}_Goal.mp3` };
-      } else if (type === 'extra') {
-        const keySafe = String(topText).trim().replace(/\s+/g, '_');
-        return { song: `extras/${keySafe}.mp3`, goal: `extras/${keySafe}_Goal.mp3` };
-      } else {
-        // Updated playlist logic to correctly map standard formatting based on inputs
-        const title = String(topText).trim() || "[Song Title]";
-        const artist = String(bottomText).trim();
-        if (artist) {
-            return { file: `${artist} - ${title}.mp3` };
-        } else {
-            return { file: `${title}.mp3` };
-        }
-      }
-    }
-
-    window.updateEditInstructions = function() {
-      const top = document.getElementById('editTopInput').value;
-      const bot = document.getElementById('editBottomInput').value;
-      const box = document.getElementById('editInstructions');
-
-      if (editingItemType === 'player') {
-        const f = getPredictedFileNames(top, bot, 'player');
-        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
-      } else if (editingItemType === 'extra') {
-        const f = getPredictedFileNames(top, bot, 'extra');
-        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
-      } else {
-        const f = getPredictedFileNames(top, bot, 'playlist');
-        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the <strong>/audio/playlist/</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
-      }
-    }
-
-    window.openEditModal = function(isNew, dragId = null) {
-      isEditModeNew = isNew;
-      activeActionId = dragId;
-
-      const topLabel = document.getElementById('editTopLabel');
-      const bottomLabel = document.getElementById('editBottomLabel');
-      const topInput = document.getElementById('editTopInput');
-      const bottomInput = document.getElementById('editBottomInput');
-      const missingInput = document.getElementById('editMissingInput');
-
-      if (isNew) {
-        document.getElementById('editModalTitle').textContent = "Add New Button";
-        topInput.value = "";
-        bottomInput.value = "";
-        missingInput.checked = true; // Default new buttons to missing until uploaded
-
-        if (currentMode === Mode.PLAYLIST) {
-          editingItemType = 'playlist';
-          topLabel.textContent = "Song Title";
-          bottomLabel.textContent = "Artist";
-          missingInput.parentElement.style.display = 'none'; // Playlist items don't use the dash system
-        } else {
-          // Assume Player for Songs/Goals page
-          editingItemType = 'player';
-          topLabel.textContent = "Player Number";
-          bottomLabel.textContent = "Player Name";
-          missingInput.parentElement.style.display = 'flex';
-        }
-      } else {
-        document.getElementById('editModalTitle').textContent = "Edit Button";
-        let targetItem;
-        
-        if (dragId.startsWith('player_')) {
-          editingItemType = 'player';
-          topLabel.textContent = "Player Number";
-          bottomLabel.textContent = "Player Name";
-          missingInput.parentElement.style.display = 'flex';
-          
-          targetItem = activePlayers.find(p => p.num == dragId.replace('player_', ''));
-          if (targetItem) {
-            topInput.value = targetItem.num;
-            bottomInput.value = targetItem.name;
-            missingInput.checked = missingSongsSet.has(targetItem.num);
-          }
-        } else if (dragId.startsWith('extra_')) {
-          editingItemType = 'extra';
-          topLabel.textContent = "Top Text";
-          bottomLabel.textContent = "Bottom Text";
-          missingInput.parentElement.style.display = 'none'; // Extras don't use dash system in current build
-
-          targetItem = activeExtras.find(e => e.key == dragId.replace('extra_', ''));
-          if (targetItem) {
-            topInput.value = targetItem.labelTop;
-            bottomInput.value = targetItem.labelBottom;
-          }
-        } else {
-          editingItemType = 'playlist';
-          topLabel.textContent = "Song Title";
-          bottomLabel.textContent = "Artist";
-          missingInput.parentElement.style.display = 'none';
-
-          targetItem = playlistLayout.find(p => p._dragId == dragId);
-          if (targetItem) {
-            topInput.value = targetItem.title;
-            bottomInput.value = targetItem.artist;
-          }
-        }
-      }
-
-      window.updateEditInstructions();
-      document.getElementById('editModalOverlay').style.display = 'flex';
-    }
-
-    window.closeEditModal = function() {
-      document.getElementById('editModalOverlay').style.display = 'none';
-      activeActionId = null;
-    }
-
-    window.saveEditModal = function() {
-      const topStr = document.getElementById('editTopInput').value.trim();
-      const botStr = document.getElementById('editBottomInput').value.trim();
-      const isMissing = document.getElementById('editMissingInput').checked;
-
-      if (!topStr) {
-        alert("Please enter the top text/number.");
-        return;
-      }
-
-      if (isEditModeNew) {
-        if (editingItemType === 'player') {
-          const num = Number(topStr);
-          const f = getPredictedFileNames(num, botStr, 'player');
-          activePlayers.push({ num: num, name: botStr, songFile: f.song, goalFile: f.goal });
-          if (isMissing) missingSongsSet.add(num);
-          else missingSongsSet.delete(num);
-        } else if (editingItemType === 'playlist') {
-          const f = getPredictedFileNames(topStr, botStr, 'playlist');
-          activePlaylist.push({ title: topStr, artist: botStr, file: f.file });
-        }
-      } else {
-        // Editing existing
-        if (editingItemType === 'player') {
-          const oldNum = Number(activeActionId.replace('player_', ''));
-          const newNum = Number(topStr);
-          const pIdx = activePlayers.findIndex(p => p.num === oldNum);
-          if (pIdx > -1) {
-            const f = getPredictedFileNames(newNum, botStr, 'player');
-            activePlayers[pIdx].num = newNum;
-            activePlayers[pIdx].name = botStr;
-            activePlayers[pIdx].songFile = f.song;
-            activePlayers[pIdx].goalFile = f.goal;
-            
-            // Handle missing state changes
-            missingSongsSet.delete(oldNum);
-            if (isMissing) missingSongsSet.add(newNum);
-
-            // Port over properties to new ID if number changed
-            if (oldNum !== newNum) {
-              if (cardColors[activeActionId]) {
-                cardColors['player_' + newNum] = cardColors[activeActionId];
-                delete cardColors[activeActionId];
-              }
-              if (lockedButtonsSet.has(activeActionId)) {
-                lockedButtonsSet.delete(activeActionId);
-                lockedButtonsSet.add('player_' + newNum);
-              }
-            }
-          }
-        } else if (editingItemType === 'extra') {
-          const key = activeActionId.replace('extra_', '');
-          const eIdx = activeExtras.findIndex(e => e.key === key);
-          if (eIdx > -1) {
-            activeExtras[eIdx].labelTop = topStr;
-            activeExtras[eIdx].labelBottom = botStr;
-            const f = getPredictedFileNames(topStr, botStr, 'extra');
-            activeExtras[eIdx].songFile = f.song;
-            activeExtras[eIdx].goalFile = f.goal;
-          }
-        } else if (editingItemType === 'playlist') {
-          const targetItem = playlistLayout.find(p => p._dragId == activeActionId);
-          if (targetItem) {
-             const plIdx = activePlaylist.findIndex(p => p.title === targetItem.title && p.artist === targetItem.artist);
-             if (plIdx > -1) {
-                // Update title, artist, AND exactly what the filename should now be predicted as!
-                const f = getPredictedFileNames(topStr, botStr, 'playlist');
-                activePlaylist[plIdx].title = topStr;
-                activePlaylist[plIdx].artist = botStr;
-                activePlaylist[plIdx].file = f.file;
-                
-                // Because ID is based on title/artist, we need to map colors if they renamed it
-                const safeTitle = (topStr || 'U').replace(/[^a-zA-Z0-9]/g, '_');
-                const safeArtist = (botStr || 'U').replace(/[^a-zA-Z0-9]/g, '_');
-                const newDragId = `pl_${safeTitle}_${safeArtist}`;
-                
-                if (activeActionId !== newDragId) {
-                   if (cardColors[activeActionId]) {
-                     cardColors[newDragId] = cardColors[activeActionId];
-                     delete cardColors[activeActionId];
-                   }
-                   if (lockedButtonsSet.has(activeActionId)) {
-                     lockedButtonsSet.delete(activeActionId);
-                     lockedButtonsSet.add(newDragId);
-                   }
-                }
-             }
-          }
-        }
-      }
-
-      saveAllData();
-      buildLayouts();
-      window.closeEditModal();
-      renderGrid();
-    }
-
     window.showExportCode = function() {
       // Export completely encapsulates current memory settings to fix cross-device syncing
       let code = `// COPY AND PASTE THIS TO REPLACE THE ARRAYS AT THE TOP OF YOUR index.html\n\n`;
+      code += `const defaultAdminPinHash = "${activeAdminPinHash}";\n`;
       code += `const defaultMissingSongs = ${JSON.stringify(Array.from(missingSongsSet))};\n`;
       code += `const defaultLockedButtons = ${JSON.stringify(Array.from(lockedButtonsSet))};\n`;
       code += `const defaultCardColors = ${JSON.stringify(cardColors, null, 2)};\n`;
@@ -1882,8 +1399,8 @@ const defaultPlaylist = [
       
       const isLocked = lockedButtonsSet.has(dragId);
 
-      // Only allow desktop dragging if not in tap-to-move mode AND button is not locked
-      if (!isMoveMode && !isLocked) {
+      // Only allow desktop dragging if not in tap-to-move mode AND button is not locked AND is admin
+      if (!isMoveMode && !isLocked && isAdmin) {
         card.setAttribute('draggable', 'true'); 
       }
 
@@ -1949,6 +1466,7 @@ const defaultPlaylist = [
       let startX = 0, startY = 0;
 
       function startPress(e) {
+        if (!isAdmin) return; // Prevent action menu if not admin
         if (e.type === 'mousedown' && e.button !== 0) return; 
         isFingerMoving = false;
         longPressed = false;
@@ -2142,9 +1660,9 @@ const defaultPlaylist = [
         }
       }
 
-      // Add the persistent "+" card at the end of the layout
+      // Add the persistent "+" card at the end of the layout (Only visible in admin mode via CSS)
       const addCard = document.createElement("div");
-      addCard.className = "card add-card";
+      addCard.className = "card add-card admin-only";
       addCard.innerHTML = `<div style="font-size:36px; color:#999; font-weight:100;">+</div>`;
       addCard.onclick = () => {
          if (isMoveMode) { setStatus("Cannot move a button here."); return; }
