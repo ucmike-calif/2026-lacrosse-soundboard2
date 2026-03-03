@@ -57,6 +57,9 @@
       line-height: 1.1;
       cursor: pointer; /* Hints that it might be tappable */
       user-select: none;
+      /* Bypass iOS double-tap to zoom delay for instant tapping */
+      touch-action: manipulation; 
+      -webkit-tap-highlight-color: transparent;
     }
 
     .banner{
@@ -853,7 +856,9 @@
     let titleTapTimer;
     let failedPinAttempts = 0;
     
-    document.getElementById('mainTitle').addEventListener('click', () => {
+    // Switch to 'pointerdown' instead of 'click' for immediate response,
+    // ignoring Safari's double-tap-to-zoom 300ms delays.
+    document.getElementById('mainTitle').addEventListener('pointerdown', () => {
       if (isAdmin) return; // already unlocked
       titleTaps++;
       clearTimeout(titleTapTimer);
@@ -875,7 +880,8 @@
         document.getElementById('pinModalOverlay').style.display = 'flex';
         setTimeout(() => document.getElementById('adminPinInput').focus(), 100);
       } else {
-        titleTapTimer = setTimeout(() => { titleTaps = 0; }, 800);
+        // Increased timeout to 2 seconds to make tapping easier
+        titleTapTimer = setTimeout(() => { titleTaps = 0; }, 2000);
       }
     });
 
@@ -1000,6 +1006,283 @@
            deleteButton(activeActionId);
         }
       }
+    }
+
+    window.closeColorPicker = function() {
+      document.getElementById('colorPickerOverlay').style.display = 'none';
+      activeActionId = null;
+    }
+
+    function selectColor(bg, border) {
+      if (!activeActionId) return;
+      if (bg === null) {
+        delete cardColors[activeActionId];
+      } else {
+        cardColors[activeActionId] = { bg, border };
+      }
+      saveAllData();
+      renderGrid(); 
+      window.closeColorPicker();
+    }
+
+    /*****************************************************************
+     * ADD/EDIT BUTTON LOGIC
+     *****************************************************************/
+    function deleteButton(dragId) {
+      const isSpacer = dragId.startsWith('spacer_');
+      
+      if (isSpacer) {
+          activeSpacersSongs = activeSpacersSongs.filter(id => id !== dragId);
+          activeSpacersPlaylist = activeSpacersPlaylist.filter(id => id !== dragId);
+      } else {
+          // Replace deleted button with a Spacer so locked layout positions DO NOT shift!
+          const newSpacerId = 'spacer_' + Date.now();
+          
+          if (currentMode === Mode.PLAYLIST) {
+              activeSpacersPlaylist.push(newSpacerId);
+              const idx = playlistLayoutOrder.indexOf(dragId);
+              if (idx > -1) playlistLayoutOrder[idx] = newSpacerId;
+          } else {
+              activeSpacersSongs.push(newSpacerId);
+              const idx = songsLayoutOrder.indexOf(dragId);
+              if (idx > -1) songsLayoutOrder[idx] = newSpacerId;
+          }
+
+          if (dragId.startsWith('player_')) {
+            const num = Number(dragId.replace('player_', ''));
+            activePlayers = activePlayers.filter(p => p.num !== num);
+            missingSongsSet.delete(num);
+          } else if (dragId.startsWith('extra_')) {
+            const key = dragId.replace('extra_', '');
+            activeExtras = activeExtras.filter(e => e.key !== key);
+          } else if (dragId.startsWith('pl_')) {
+            const itemToRemove = playlistLayout.find(p => p._dragId === dragId);
+            if(itemToRemove) {
+              activePlaylist = activePlaylist.filter(p => p.title !== itemToRemove.title || p.artist !== itemToRemove.artist);
+            }
+          }
+      }
+      
+      delete cardColors[dragId];
+      lockedButtonsSet.delete(dragId);
+      
+      saveAllData();
+      buildLayouts();
+      renderGrid();
+    }
+
+    function getPredictedFileNames(topText, bottomText, type) {
+      if (type === 'player') {
+        const num = Number(topText);
+        if (isNaN(num)) return { song: "INVALID_NUMBER.mp3", goal: "INVALID_NUMBER_Goal.mp3" };
+        const numStr = String(num).padStart(2, '0');
+        const nameSafe = String(bottomText).trim().replace(/\s+/g, '_');
+        return { song: `${numStr}_${nameSafe}.mp3`, goal: `${numStr}_${nameSafe}_Goal.mp3` };
+      } else if (type === 'extra') {
+        const keySafe = String(topText).trim().replace(/\s+/g, '_');
+        return { song: `extras/${keySafe}.mp3`, goal: `extras/${keySafe}_Goal.mp3` };
+      } else {
+        // Updated playlist logic to correctly map standard formatting based on inputs
+        const title = String(topText).trim() || "[Song Title]";
+        const artist = String(bottomText).trim();
+        if (artist) {
+            return { file: `${artist} - ${title}.mp3` };
+        } else {
+            return { file: `${title}.mp3` };
+        }
+      }
+    }
+
+    window.updateEditInstructions = function() {
+      const top = document.getElementById('editTopInput').value;
+      const bot = document.getElementById('editBottomInput').value;
+      const box = document.getElementById('editInstructions');
+
+      if (editingItemType === 'player') {
+        const f = getPredictedFileNames(top, bot, 'player');
+        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+      } else if (editingItemType === 'extra') {
+        const f = getPredictedFileNames(top, bot, 'extra');
+        box.innerHTML = `Please make sure your audio files are named:<br>• <strong>${f.song}</strong> (place in the <strong>/audio/songs/</strong> folder)<br>• <strong>${f.goal}</strong> (place in the <strong>/audio/goals/</strong> folder)<br>in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+      } else {
+        const f = getPredictedFileNames(top, bot, 'playlist');
+        box.innerHTML = `Please ensure your audio file is named exactly <strong>${f.file}</strong> and placed in the <strong>/audio/playlist/</strong> folder in the <strong>2026-lacrosse-soundboard2</strong> repository on <strong>ucmike-calif</strong>'s GitHub.`;
+      }
+    }
+
+    window.openEditModal = function(isNew, dragId = null) {
+      isEditModeNew = isNew;
+      activeActionId = dragId;
+
+      const topLabel = document.getElementById('editTopLabel');
+      const bottomLabel = document.getElementById('editBottomLabel');
+      const topInput = document.getElementById('editTopInput');
+      const bottomInput = document.getElementById('editBottomInput');
+      const missingInput = document.getElementById('editMissingInput');
+
+      if (isNew) {
+        document.getElementById('editModalTitle').textContent = "Add New Button";
+        topInput.value = "";
+        bottomInput.value = "";
+        missingInput.checked = true; // Default new buttons to missing until uploaded
+
+        if (currentMode === Mode.PLAYLIST) {
+          editingItemType = 'playlist';
+          topLabel.textContent = "Song Title";
+          bottomLabel.textContent = "Artist";
+          missingInput.parentElement.style.display = 'none'; // Playlist items don't use the dash system
+        } else {
+          // Assume Player for Songs/Goals page
+          editingItemType = 'player';
+          topLabel.textContent = "Player Number";
+          bottomLabel.textContent = "Player Name";
+          missingInput.parentElement.style.display = 'flex';
+        }
+      } else {
+        document.getElementById('editModalTitle').textContent = "Edit Button";
+        let targetItem;
+        
+        if (dragId.startsWith('player_')) {
+          editingItemType = 'player';
+          topLabel.textContent = "Player Number";
+          bottomLabel.textContent = "Player Name";
+          missingInput.parentElement.style.display = 'flex';
+          
+          targetItem = activePlayers.find(p => p.num == dragId.replace('player_', ''));
+          if (targetItem) {
+            topInput.value = targetItem.num;
+            bottomInput.value = targetItem.name;
+            missingInput.checked = missingSongsSet.has(targetItem.num);
+          }
+        } else if (dragId.startsWith('extra_')) {
+          editingItemType = 'extra';
+          topLabel.textContent = "Top Text";
+          bottomLabel.textContent = "Bottom Text";
+          missingInput.parentElement.style.display = 'none'; // Extras don't use dash system in current build
+
+          targetItem = activeExtras.find(e => e.key == dragId.replace('extra_', ''));
+          if (targetItem) {
+            topInput.value = targetItem.labelTop;
+            bottomInput.value = targetItem.labelBottom;
+          }
+        } else {
+          editingItemType = 'playlist';
+          topLabel.textContent = "Song Title";
+          bottomLabel.textContent = "Artist";
+          missingInput.parentElement.style.display = 'none';
+
+          targetItem = playlistLayout.find(p => p._dragId == dragId);
+          if (targetItem) {
+            topInput.value = targetItem.title;
+            bottomInput.value = targetItem.artist;
+          }
+        }
+      }
+
+      window.updateEditInstructions();
+      document.getElementById('editModalOverlay').style.display = 'flex';
+    }
+
+    window.closeEditModal = function() {
+      document.getElementById('editModalOverlay').style.display = 'none';
+      activeActionId = null;
+    }
+
+    window.saveEditModal = function() {
+      const topStr = document.getElementById('editTopInput').value.trim();
+      const botStr = document.getElementById('editBottomInput').value.trim();
+      const isMissing = document.getElementById('editMissingInput').checked;
+
+      if (!topStr) {
+        alert("Please enter the top text/number.");
+        return;
+      }
+
+      if (isEditModeNew) {
+        if (editingItemType === 'player') {
+          const num = Number(topStr);
+          const f = getPredictedFileNames(num, botStr, 'player');
+          activePlayers.push({ num: num, name: botStr, songFile: f.song, goalFile: f.goal });
+          if (isMissing) missingSongsSet.add(num);
+          else missingSongsSet.delete(num);
+        } else if (editingItemType === 'playlist') {
+          const f = getPredictedFileNames(topStr, botStr, 'playlist');
+          activePlaylist.push({ title: topStr, artist: botStr, file: f.file });
+        }
+      } else {
+        // Editing existing
+        if (editingItemType === 'player') {
+          const oldNum = Number(activeActionId.replace('player_', ''));
+          const newNum = Number(topStr);
+          const pIdx = activePlayers.findIndex(p => p.num === oldNum);
+          if (pIdx > -1) {
+            const f = getPredictedFileNames(newNum, botStr, 'player');
+            activePlayers[pIdx].num = newNum;
+            activePlayers[pIdx].name = botStr;
+            activePlayers[pIdx].songFile = f.song;
+            activePlayers[pIdx].goalFile = f.goal;
+            
+            // Handle missing state changes
+            missingSongsSet.delete(oldNum);
+            if (isMissing) missingSongsSet.add(newNum);
+
+            // Port over properties to new ID if number changed
+            if (oldNum !== newNum) {
+              if (cardColors[activeActionId]) {
+                cardColors['player_' + newNum] = cardColors[activeActionId];
+                delete cardColors[activeActionId];
+              }
+              if (lockedButtonsSet.has(activeActionId)) {
+                lockedButtonsSet.delete(activeActionId);
+                lockedButtonsSet.add('player_' + newNum);
+              }
+            }
+          }
+        } else if (editingItemType === 'extra') {
+          const key = activeActionId.replace('extra_', '');
+          const eIdx = activeExtras.findIndex(e => e.key === key);
+          if (eIdx > -1) {
+            activeExtras[eIdx].labelTop = topStr;
+            activeExtras[eIdx].labelBottom = botStr;
+            const f = getPredictedFileNames(topStr, botStr, 'extra');
+            activeExtras[eIdx].songFile = f.song;
+            activeExtras[eIdx].goalFile = f.goal;
+          }
+        } else if (editingItemType === 'playlist') {
+          const targetItem = playlistLayout.find(p => p._dragId == activeActionId);
+          if (targetItem) {
+             const plIdx = activePlaylist.findIndex(p => p.title === targetItem.title && p.artist === targetItem.artist);
+             if (plIdx > -1) {
+                // Update title, artist, AND exactly what the filename should now be predicted as!
+                const f = getPredictedFileNames(topStr, botStr, 'playlist');
+                activePlaylist[plIdx].title = topStr;
+                activePlaylist[plIdx].artist = botStr;
+                activePlaylist[plIdx].file = f.file;
+                
+                // Because ID is based on title/artist, we need to map colors if they renamed it
+                const safeTitle = (topStr || 'U').replace(/[^a-zA-Z0-9]/g, '_');
+                const safeArtist = (botStr || 'U').replace(/[^a-zA-Z0-9]/g, '_');
+                const newDragId = `pl_${safeTitle}_${safeArtist}`;
+                
+                if (activeActionId !== newDragId) {
+                   if (cardColors[activeActionId]) {
+                     cardColors[newDragId] = cardColors[activeActionId];
+                     delete cardColors[activeActionId];
+                   }
+                   if (lockedButtonsSet.has(activeActionId)) {
+                     lockedButtonsSet.delete(activeActionId);
+                     lockedButtonsSet.add(newDragId);
+                   }
+                }
+             }
+          }
+        }
+      }
+
+      saveAllData();
+      buildLayouts();
+      window.closeEditModal();
+      renderGrid();
     }
 
     window.showExportCode = function() {
