@@ -469,8 +469,8 @@
     /* Play Counter Badge */
     .play-counter-badge {
       position: absolute;
-      top: -8px;
-      right: -8px;
+      top: -2px;
+      right: -2px;
       background: var(--purple);
       color: white;
       font-size: 12px;
@@ -489,15 +489,25 @@
     /* Lock Icon */
     .lock-icon {
       position: absolute;
-      top: 8px;
-      right: 8px;
-      font-size: 14px;
+      top: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff;
+      border: 1px solid var(--btnBorder);
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      font-size: 11px;
       display: none;
-      opacity: 0.6;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+      opacity: 0.95;
       pointer-events: none;
+      z-index: 15;
     }
     .card.locked .lock-icon {
-      display: block;
+      display: flex;
     }
 
     /* Modal Overlay Base */
@@ -745,10 +755,9 @@
     const FADE_TOTAL_SEC = 4.0; 
     const FADE_HOLD_SEC  = 1.0; 
 
-    // Default missing items
     const defaultAdminPinHash = "MTAzMF9sYXgyMDI2";
     const defaultMissingSongs = [2,4,5,7,8,10,12,13,15,25,30];
-    const defaultLockedButtons = ["playlist_2","playlist_7","playlist_14","playlist_19","pl_Bonanza_U","pl_The_Good__The_Bad_and_The_Ugly_Theme_U","pl_Happy_Trails_Roy_Rogers","pl_Wild_Horses_The_Sundays"];
+    const defaultLockedButtons = ["playlist_2","playlist_7","playlist_14","playlist_19","pl_The_Good__The_Bad_and_The_Ugly_Theme_U","pl_Happy_Trails_Roy_Rogers","pl_Timber_Old_Town_Road_Chrispy_Mashups","pl_Bonanza_U"];
     const defaultCardColors = {
       "playlist_2": {
         "bg": "#ffebee",
@@ -778,21 +787,65 @@
         "bg": "#ffebee",
         "border": "#ef9a9a"
       },
-      "pl_Wild_Horses_The_Sundays": {
+      "pl_Timber_Old_Town_Road_Chrispy_Mashups": {
         "bg": "#ffebee",
         "border": "#ef9a9a"
       },
-      "pl_TBD2_U": {
-        "bg": "#f5f5f5",
-        "border": "#e0e0e0"
+      "pl_Made_for_Lovin__You_Boogie_Wonderland_BillMcClintockMashups": {
+        "bg": "#f3e5f5",
+        "border": "#ce93d8"
       },
-      "pl_TBD3_U": {
-        "bg": "#f5f5f5",
-        "border": "#e0e0e0"
+      "pl_7_Nation_Teen_Spirit_DJ_BootOX": {
+        "bg": "#f3e5f5",
+        "border": "#ce93d8"
       },
-      "pl_TBD1_U": {
-        "bg": "#f5f5f5",
-        "border": "#e0e0e0"
+      "pl_Bust_a_Move_FWIW_BillMcClintockMashups": {
+        "bg": "#f3e5f5",
+        "border": "#ce93d8"
+      },
+      "pl_Lonely_Heart_Let_it_Whip_BillMcClintockMashups": {
+        "bg": "#f3e5f5",
+        "border": "#ce93d8"
+      },
+      "pl_Celebration_Bang_Your_Head_BillMcClintockMashups": {
+        "bg": "#f3e5f5",
+        "border": "#ce93d8"
+      },
+      "pl_Jeopardy_Theme_Song_U": {
+        "bg": "#fffde7",
+        "border": "#fff59d"
+      },
+      "pl_RefsHuddle_U": {
+        "bg": "#fffde7",
+        "border": "#fff59d"
+      },
+      "pl_Terminator_2_Theme_U": {
+        "bg": "#e3f2fd",
+        "border": "#90caf9"
+      },
+      "pl_The_Dark_Knight_Main_Theme_Hans_Zimmer": {
+        "bg": "#e3f2fd",
+        "border": "#90caf9"
+      },
+      "pl_Right_Here__Right_Now_Fatboy_Slim": {
+        "bg": "#e3f2fd",
+        "border": "#90caf9"
+      },
+      "extra_Anthem": {
+        "bg": "#fffde7",
+        "border": "#fff59d"
+      },
+      "extra_TBD 1": {
+        "bg": "#fffde7",
+        "border": "#fff59d"
+      },
+      "extra_TBD 2": {
+        "bg": "#fffde7",
+        "border": "#fff59d"
+      },
+      "extra_TBD 3": {
+        "bg": "#fffde7",
+        "border": "#fff59d"
       }
     };
     const defaultSongsLayoutOrder = [
@@ -826,31 +879,31 @@
       "pl_Sabotage__Instrumental__Beastie_Boys",
       "pl_Enter_Sandman_Metallica",
       "pl_Ain_t_Talkin___Bout_Love__Instrumental__Van_Halen",
-      "pl_TBD1_U",
-      "pl_Bonanza_U",
+      "pl_7_Nation_Teen_Spirit_DJ_BootOX",
+      "pl_Timber_Old_Town_Road_Chrispy_Mashups",
       "pl_HEY__Gary_Glitter",
       "pl_Gonna_Make_You_Sweat_C_C_Music_Factory",
       "pl_Y_all_Ready_for_This__Space_Jam_Theme__U",
       "pl_It_Takes_Two_Rob_Base___D_J__E_Z_Rock",
-      "pl_TBD2_U",
+      "pl_Bust_a_Move_FWIW_BillMcClintockMashups",
       "pl_The_Good__The_Bad_and_The_Ugly_Theme_U",
       "pl_How_Soon_Is_Now__The_Smiths",
       "pl_Situation_Yaz",
+      "pl_Still_D_R_E___Instrumental__Dr__Dre",
+      "pl_Rocket_Fuel_ft__De_La_Soul_DJ_Shadow",
+      "pl_Celebration_Bang_Your_Head_BillMcClintockMashups",
+      "pl_Happy_Trails_Roy_Rogers",
+      "pl_Right_Here__Right_Now_Fatboy_Slim",
+      "pl_Jump_into_the_Fire__Karaoke__Harry_Nilsson",
+      "pl_Kill_Bill_Theme_U",
+      "pl_Misirlou__Pulp_Fiction__Dick_Dale",
+      "pl_Lonely_Heart_Let_it_Whip_BillMcClintockMashups",
+      "pl_Bonanza_U",
       "pl_The_Dark_Knight_Main_Theme_Hans_Zimmer",
       "pl_Terminator_2_Theme_U",
-      "pl_Misirlou__Pulp_Fiction__Dick_Dale",
-      "pl_Happy_Trails_Roy_Rogers",
-      "pl_Kill_Bill_Theme_U",
-      "pl_Yankee_and_the_Brave__Instrumental__Run_The_Jewels",
-      "pl_Jump_into_the_Fire__Karaoke__Harry_Nilsson",
-      "pl_Blockbuster_Night_Part_1__Instrumental__Run_The_Jewels",
-      "pl_Rocket_Fuel_ft__De_La_Soul_DJ_Shadow",
-      "pl_Wild_Horses_The_Sundays",
-      "pl_Still_D_R_E___Instrumental__Dr__Dre",
       "pl_Jeopardy_Theme_Song_U",
-      "pl_Right_Here__Right_Now_Fatboy_Slim",
       "pl_RefsHuddle_U",
-      "pl_TBD3_U"
+      "pl_Made_for_Lovin__You_Boogie_Wonderland_BillMcClintockMashups"
     ];
     const defaultSpacersSongs = [];
     const defaultSpacersPlaylist = [];
@@ -1154,6 +1207,36 @@
         "title": "RefsHuddle",
         "artist": "",
         "file": "RefsHuddle.mp3"
+      },
+      {
+        "title": "7 Nation Teen Spirit",
+        "artist": "DJ BootOX",
+        "file": "DJ BootOX - 7 Nation Teen Spirit.mp3"
+      },
+      {
+        "title": "Bust a Move FWIW",
+        "artist": "BillMcClintockMashups",
+        "file": "BillMcClintockMashups - Bust a Move FWIW.mp3"
+      },
+      {
+        "title": "Celebration Bang Your Head",
+        "artist": "BillMcClintockMashups",
+        "file": "BillMcClintockMashups - Celebration Bang Your Head.mp3"
+      },
+      {
+        "title": "Lonely Heart Let it Whip",
+        "artist": "BillMcClintockMashups",
+        "file": "BillMcClintockMashups - Lonely Heart Let it Whip.mp3"
+      },
+      {
+        "title": "Made for Lovin' You Boogie Wonderland",
+        "artist": "BillMcClintockMashups",
+        "file": "BillMcClintockMashups - Made for Lovin' You Boogie Wonderland.mp3"
+      },
+      {
+        "title": "Timber Old Town Road",
+        "artist": "Chrispy Mashups",
+        "file": "Chrispy Mashups - Timber Old Town Road.mp3"
       }
     ];
 
