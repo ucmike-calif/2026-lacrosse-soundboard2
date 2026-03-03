@@ -169,29 +169,51 @@
       /* Add safe padding for bottom of iPad screens */
       padding-bottom: max(16px, env(safe-area-inset-bottom));
     }
+    
+    /* Enforced Standard Column Grid (Songs & Goals) */
     .grid{
       display: grid;
       gap: 12px;
-      grid-template-columns: repeat(6, minmax(130px, 1fr));
+      /* Default to exactly 6 columns on large screens */
+      grid-template-columns: repeat(6, 1fr); 
     }
 
+    @media (max-width: 1200px){
+      .grid{ grid-template-columns: repeat(5, 1fr); } /* 5 columns for smaller laptops */
+    }
+    @media (max-width: 950px){
+      .grid{ grid-template-columns: repeat(4, 1fr); } /* 4 columns for tablets */
+    }
+    @media (max-width: 700px){
+      .grid{ grid-template-columns: repeat(3, 1fr); } /* 3 columns for large phones */
+    }
+    @media (max-width: 500px){
+      .grid{ grid-template-columns: repeat(2, 1fr); } /* 2 columns for small phones */
+    }
+
+    /* Enforced Tighter Column Grid for Playlists */
+    .grid.playlist-grid{
+      gap: 8px;
+      /* Default to exactly 7 columns for playlists to fit more */
+      grid-template-columns: repeat(7, 1fr);
+    }
+    
+    @media (max-width: 1300px){
+      .grid.playlist-grid{ grid-template-columns: repeat(6, 1fr); }
+    }
     @media (max-width: 1100px){
-      .grid{ grid-template-columns: repeat(4, minmax(140px, 1fr)); }
+      .grid.playlist-grid{ grid-template-columns: repeat(5, 1fr); }
     }
-    @media (max-width: 750px){
-      .grid{ grid-template-columns: repeat(3, minmax(120px, 1fr)); }
-    }
-    @media (max-width: 520px){
-      .grid{ grid-template-columns: repeat(2, minmax(140px, 1fr)); }
-    }
-
-    /* Playlist-specific grid: more columns, tighter */
-    @media (max-width: 750px){
+    @media (max-width: 850px){
       .grid.playlist-grid{ grid-template-columns: repeat(4, 1fr); }
     }
-    @media (max-width: 520px){
+    @media (max-width: 600px){
       .grid.playlist-grid{ grid-template-columns: repeat(3, 1fr); }
     }
+    @media (max-width: 400px){
+      .grid.playlist-grid{ grid-template-columns: repeat(2, 1fr); }
+    }
+
 
     .card{
       border: 1px solid var(--btnBorder);
@@ -285,12 +307,6 @@
     .card.moving-target:active {
       background: var(--active-theme);
       opacity: 0.3;
-    }
-
-    /* Playlist-specific grid: 6 columns, tight gaps */
-    .grid.playlist-grid{
-      gap: 6px;
-      grid-template-columns: repeat(6, 1fr);
     }
 
     /* Playlist cards */
@@ -448,6 +464,26 @@
       font-size: 14px;
       color: #222;
       min-height: 18px;
+    }
+
+    /* Play Counter Badge */
+    .play-counter-badge {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      background: var(--purple);
+      color: white;
+      font-size: 12px;
+      font-weight: bold;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+      pointer-events: none;
+      z-index: 15;
     }
 
     /* Lock Icon */
@@ -1193,6 +1229,9 @@
     let isAdmin = false;
     window.selectedExactFile = null; // Memory for specific GitHub file extensions
 
+    // Track play counts per session
+    let playCounters = {};
+
     // Track all actively playing tracks
     const activeTracks = new Map(); // cardEl -> { audio, gainNode, mediaNode, fadeTimer }
 
@@ -1260,7 +1299,8 @@
       document.body.classList.remove('admin-mode');
       isMoveMode = false;
       moveSourceId = null;
-      setStatus("Board is now locked.");
+      playCounters = {}; // Reset counters on lock
+      setStatus("Board is now locked. Counters reset.");
       renderGrid();
     });
 
@@ -2199,6 +2239,12 @@
             </div>
           `;
           card.appendChild(playOverlay);
+          
+          const badge = document.createElement("div");
+          badge.className = "play-counter-badge";
+          badge.textContent = playCounters[dragId] || 0;
+          if (!playCounters[dragId]) badge.style.display = 'none';
+          card.appendChild(badge);
       }
       
       const lockIcon = document.createElement("div");
@@ -2319,6 +2365,17 @@
           stopTrackWithFade(card);
           return;
         }
+        
+        // Increment the play counter for this specific button
+        playCounters[dragId] = (playCounters[dragId] || 0) + 1;
+        let badge = card.querySelector('.play-counter-badge');
+        if (!badge) {
+          badge = document.createElement("div");
+          badge.className = "play-counter-badge";
+          card.appendChild(badge);
+        }
+        badge.textContent = playCounters[dragId];
+        badge.style.display = 'flex';
         
         onClick(card);
       });
