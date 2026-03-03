@@ -615,17 +615,24 @@
       
       <div class="edit-input-group">
         <label id="editTopLabel">Player Number</label>
-        <input type="text" id="editTopInput" placeholder="e.g. 4" oninput="updateEditInstructions()" />
+        <input type="text" id="editTopInput" placeholder="e.g. 4" oninput="window.selectedExactFile = null; updateEditInstructions()" />
       </div>
       
       <div class="edit-input-group">
         <label id="editBottomLabel">Player Name</label>
-        <input type="text" id="editBottomInput" placeholder="e.g. Jane Doe" oninput="updateEditInstructions()" />
+        <input type="text" id="editBottomInput" placeholder="e.g. Jane Doe" oninput="window.selectedExactFile = null; updateEditInstructions()" />
       </div>
       
       <div class="edit-checkbox-group">
         <input type="checkbox" id="editMissingInput" style="transform: scale(1.3); margin-right: 6px;" />
         <label for="editMissingInput" style="margin:0; cursor:pointer;">No sound file assigned (Gray out button)</label>
+      </div>
+
+      <!-- GitHub Browse Button (Playlist Only) -->
+      <div id="browseFilesContainer" style="display:none; margin-bottom: 16px; text-align: left;">
+        <button type="button" class="ctlbtn" style="width: 100%; font-size: 13px; background: #f8f9fa; border: 2px dashed #bbb; color: #555;" onclick="fetchGithubFiles()">🔍 Browse Uploaded Files</button>
+        <div id="githubFilesList" style="max-height: 160px; overflow-y: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; display: none; background: #fff; box-shadow: inset 0 2px 5px rgba(0,0,0,0.05);">
+        </div>
       </div>
       
       <div class="edit-instructions" id="editInstructions">
@@ -849,6 +856,7 @@
     const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal", PLAYLIST: "playlist" });
     let currentMode = Mode.SONGS;
     let isAdmin = false;
+    window.selectedExactFile = null; // Memory for specific GitHub file extensions
 
     // Track all actively playing tracks
     const activeTracks = new Map(); // cardEl -> { audio, gainNode, mediaNode, fadeTimer }
@@ -1055,6 +1063,77 @@
     /*****************************************************************
      * ADD/EDIT BUTTON LOGIC
      *****************************************************************/
+    
+    // Browse GitHub Files Feature
+    window.fetchGithubFiles = async function() {
+        const listDiv = document.getElementById('githubFilesList');
+        if (listDiv.style.display === 'block') {
+            listDiv.style.display = 'none';
+            return;
+        }
+        listDiv.innerHTML = '<div style="padding: 12px; font-size: 13px; color: #666; text-align:center;">Loading files from GitHub...</div>';
+        listDiv.style.display = 'block';
+
+        try {
+            if (!window.cachedGithubFiles) {
+                const response = await fetch('https://api.github.com/repos/ucmike-calif/2026-lacrosse-soundboard2/contents/audio/playlist');
+                if (!response.ok) throw new Error("API Limit or Error");
+                window.cachedGithubFiles = await response.json();
+            }
+            
+            const data = window.cachedGithubFiles;
+            listDiv.innerHTML = '';
+            
+            // Allow any standard audio extension
+            const audioFiles = data.filter(f => f.name.toLowerCase().match(/\.(mp3|m4a|wav|mp4|ogg)$/));
+            
+            if(audioFiles.length === 0) {
+                listDiv.innerHTML = '<div style="padding: 12px; font-size: 13px; color: #666; text-align:center;">No audio files found.</div>';
+                return;
+            }
+
+            audioFiles.forEach(file => {
+                const item = document.createElement('div');
+                item.style.padding = '10px 12px';
+                item.style.borderBottom = '1px solid #eee';
+                item.style.fontSize = '13px';
+                item.style.cursor = 'pointer';
+                item.style.color = 'var(--purple)';
+                item.style.fontWeight = '600';
+                item.style.textAlign = 'left';
+                item.style.wordBreak = 'break-all';
+                
+                item.onmouseover = () => item.style.background = '#f3e5f5';
+                item.onmouseout = () => item.style.background = 'transparent';
+                item.textContent = file.name;
+                item.onclick = () => selectGithubFile(file.name);
+                listDiv.appendChild(item);
+            });
+        } catch(e) {
+            listDiv.innerHTML = '<div style="padding: 12px; font-size: 13px; color: #b30000; text-align:center;">Failed to load files.<br><span style="font-size:11px; font-weight:normal;">(GitHub API limit reached. Try again later.)</span></div>';
+        }
+    }
+
+    window.selectGithubFile = function(filename) {
+        window.selectedExactFile = filename;
+        const cleanName = filename.replace(/\.[^/.]+$/, ""); // remove extension
+        let title = cleanName;
+        let artist = "";
+        
+        if (cleanName.includes(" - ")) {
+            const parts = cleanName.split(" - ");
+            artist = parts[0].trim();
+            title = parts.slice(1).join(" - ").trim();
+        }
+
+        document.getElementById('editTopInput').value = title;
+        document.getElementById('editBottomInput').value = artist;
+        
+        document.getElementById('githubFilesList').style.display = 'none';
+        window.updateEditInstructions();
+    }
+
+
     function deleteButton(dragId) {
       const isSpacer = dragId.startsWith('spacer_');
       
@@ -1109,7 +1188,11 @@
         const keySafe = String(topText).trim().replace(/\s+/g, '_');
         return { song: `extras/${keySafe}.mp3`, goal: `extras/${keySafe}_Goal.mp3` };
       } else {
-        // Updated playlist logic to correctly map standard formatting based on inputs
+        // If they used the "Browse" feature, use the exact filename they picked!
+        if (window.selectedExactFile) {
+            return { file: window.selectedExactFile };
+        }
+        // Otherwise, construct it
         const title = String(topText).trim() || "[Song Title]";
         const artist = String(bottomText).trim();
         if (artist) {
@@ -1140,12 +1223,15 @@
     window.openEditModal = function(isNew, dragId = null) {
       isEditModeNew = isNew;
       activeActionId = dragId;
-
+      window.selectedExactFile = null; // Clear out any previously selected file memory
+      
       const topLabel = document.getElementById('editTopLabel');
       const bottomLabel = document.getElementById('editBottomLabel');
       const topInput = document.getElementById('editTopInput');
       const bottomInput = document.getElementById('editBottomInput');
       const missingInput = document.getElementById('editMissingInput');
+      
+      document.getElementById('githubFilesList').style.display = 'none';
 
       if (isNew) {
         document.getElementById('editModalTitle').textContent = "Add New Button";
@@ -1158,12 +1244,14 @@
           topLabel.textContent = "Song Title";
           bottomLabel.textContent = "Artist";
           missingInput.parentElement.style.display = 'none'; // Playlist items don't use the dash system
+          document.getElementById('browseFilesContainer').style.display = 'block';
         } else {
           // Assume Player for Songs/Goals page
           editingItemType = 'player';
           topLabel.textContent = "Player Number";
           bottomLabel.textContent = "Player Name";
           missingInput.parentElement.style.display = 'flex';
+          document.getElementById('browseFilesContainer').style.display = 'none';
         }
       } else {
         document.getElementById('editModalTitle').textContent = "Edit Button";
@@ -1174,6 +1262,7 @@
           topLabel.textContent = "Player Number";
           bottomLabel.textContent = "Player Name";
           missingInput.parentElement.style.display = 'flex';
+          document.getElementById('browseFilesContainer').style.display = 'none';
           
           targetItem = activePlayers.find(p => p.num == dragId.replace('player_', ''));
           if (targetItem) {
@@ -1186,6 +1275,7 @@
           topLabel.textContent = "Top Text";
           bottomLabel.textContent = "Bottom Text";
           missingInput.parentElement.style.display = 'none'; // Extras don't use dash system in current build
+          document.getElementById('browseFilesContainer').style.display = 'none';
 
           targetItem = activeExtras.find(e => e.key == dragId.replace('extra_', ''));
           if (targetItem) {
@@ -1197,11 +1287,14 @@
           topLabel.textContent = "Song Title";
           bottomLabel.textContent = "Artist";
           missingInput.parentElement.style.display = 'none';
+          document.getElementById('browseFilesContainer').style.display = 'block';
 
           targetItem = playlistLayout.find(p => p._dragId == dragId);
           if (targetItem) {
             topInput.value = targetItem.title;
             bottomInput.value = targetItem.artist;
+            // If editing an existing playlist item, store its exact file name so we don't accidentally overwrite extensions
+            window.selectedExactFile = targetItem.file; 
           }
         }
       }
