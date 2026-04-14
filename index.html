@@ -2007,6 +2007,13 @@
     function ensureAudioContext(){
       if (!audioCtx){
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        audioCtx.onstatechange = () => {
+          // After an interruption (phone call, Siri, notification), iOS suspends the context.
+          // The next user tap will re-resume it via the synchronous resume() in the click handler.
+          if (audioCtx.state === 'suspended' && activeTracks.size > 0) {
+            setStatus("Audio interrupted — tap any button to resume.");
+          }
+        };
       }
       return audioCtx;
     }
@@ -2116,6 +2123,8 @@
       audio.volume = 1.0;
       audio.muted = false;
       audio.playsInline = true;
+      audio.setAttribute('playsinline', '');        // belt-and-suspenders for older iOS WebKit
+      audio.setAttribute('webkit-playsinline', '');
 
       const updateProgress = () => {
         if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
@@ -2126,6 +2135,14 @@
       audio.addEventListener('timeupdate', updateProgress);
 
       audio.addEventListener("error", () => {
+        // error.code 1 = MEDIA_ERR_ABORTED (intentional stop, not a broken file).
+        // Don't show the "file not found" modal for that — just clean up silently.
+        if (audio.error && audio.error.code === 1) {
+          if (activeTracks.has(buttonEl) && activeTracks.get(buttonEl).audio === audio) {
+            stopTrackImmediate(buttonEl);
+          }
+          return;
+        }
         const fullUrl = new URL(src, window.location.href).href; 
         const decodedName = decodeURIComponent(fullUrl.split('/').pop());
         
@@ -2523,6 +2540,11 @@
           return;
         }
         
+        // iOS REQUIRES AudioContext.resume() to be called synchronously within
+        // the user gesture — do it here before any async calls in onClick().
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
         // Increment the play counter for this specific button
         playCounters[dragId] = (playCounters[dragId] || 0) + 1;
         let badge = card.querySelector('.play-counter-badge');
